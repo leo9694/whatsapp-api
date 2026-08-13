@@ -7,6 +7,7 @@ const logger = require("./utils/logger");
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
+const host = process.env.HOST?.trim() || "127.0.0.1";
 
 app.disable("x-powered-by");
 app.use(helmet());
@@ -30,8 +31,8 @@ app.use((error, _req, res, _next) => {
 });
 
 if (require.main === module) {
-  app.listen(port, "0.0.0.0", () => {
-    logger.info("server_started", { port });
+  app.listen(port, host, () => {
+    logger.info("server_started", { host, port });
   });
 }
 

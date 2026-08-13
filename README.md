@@ -18,7 +18,7 @@ Para desenvolvimento, com reinício automático:
 npm run dev
 ```
 
-A aplicação escuta internamente em `0.0.0.0:3000` (ou na porta definida em `PORT`) e deve ser publicada externamente pelo Nginx.
+A aplicação escuta internamente em `127.0.0.1:3000` (ou no endereço e porta definidos em `HOST` e `PORT`) e deve ser publicada externamente pelo Nginx.
 
 ## Variáveis de ambiente
 
@@ -26,6 +26,7 @@ Copie `.env.example` para `.env` e preencha:
 
 ```dotenv
 PORT=3000
+HOST=127.0.0.1
 WHATSAPP_VERIFY_TOKEN=crie-um-segredo-longo-e-exclusivo
 WHATSAPP_ACCESS_TOKEN=token-de-acesso-fornecido-pela-meta
 WHATSAPP_PHONE_NUMBER_ID=id-do-numero-no-novo-app
@@ -34,6 +35,7 @@ META_GRAPH_API_VERSION=v25.0
 ```
 
 - `WHATSAPP_VERIFY_TOKEN`: valor secreto criado por você; deve ser igual ao informado na configuração do webhook na Meta.
+- `HOST`: mantenha `127.0.0.1` em produção para aceitar conexões apenas do proxy local.
 - `WHATSAPP_ACCESS_TOKEN`: token da API, usado somente no endpoint manual de envio.
 - `WHATSAPP_PHONE_NUMBER_ID`: ID do número usado na URL de envio.
 - `WHATSAPP_WABA_ID`: ID da WABA, reservado para uso futuro; nenhuma configuração é alterada por este projeto.
