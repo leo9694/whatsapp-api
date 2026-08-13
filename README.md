@@ -126,6 +126,8 @@ Não altere o webhook nem qualquer configuração do aplicativo **chatapp**. Est
 
 ## Produção com PM2
 
+Gravações `audio/webm` produzidas por navegadores Chromium são convertidas para OGG/Opus antes do upload para a Meta. O binário usado nessa conversão é fornecido pela dependência local `ffmpeg-static`; não é necessário instalar FFmpeg globalmente na VPS.
+
 Na pasta do projeto:
 
 ```bash

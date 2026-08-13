@@ -250,7 +250,7 @@ Mensagens de mídia emitidas em `message:new` incluem apenas uma URL interna:
 
 ### Áudio e voice messages
 
-O payload da Cloud API para áudio usa o mesmo objeto `audio` por media ID. Para mensagens de voz, prefira OGG com codec Opus. O backend não instala FFmpeg nem transcoda; formatos de `MediaRecorder` incompatíveis são rejeitados e devem ser convertidos antes do upload.
+O payload da Cloud API para áudio usa o mesmo objeto `audio` por media ID. Para mensagens de voz, o arquivo enviado à Meta usa OGG com codec Opus. Como navegadores Chromium normalmente gravam `audio/webm;codecs=opus`, o backend aceita essa entrada e a converte temporariamente para OGG/Opus com o binário isolado da dependência `ffmpeg-static`. Nenhuma instalação global de FFmpeg é necessária.
 
 ## Respostas das novas rotas
 

@@ -4,6 +4,9 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const os = require("node:os");
 const { Readable } = require("node:stream");
+const { promisify } = require("node:util");
+const { execFile } = require("node:child_process");
+const ffmpegPath = require("ffmpeg-static");
 const axios = require("axios");
 const templateService = require("../src/services/template.service");
 const mediaService = require("../src/services/media.service");
@@ -12,6 +15,7 @@ const messageService = require("../src/services/message.service");
 const conversationService = require("../src/services/conversation.service");
 const mediaController = require("../src/controllers/media.controller");
 const { createFakePrisma } = require("./helpers/fakePrisma");
+const execFileAsync = promisify(execFile);
 
 const approvedTemplate = {
   id: "1", name: "pedido_aprovado", language: "pt_BR", status: "APPROVED", category: "UTILITY",
@@ -127,6 +131,28 @@ test("valida MIME real, faz upload mockado e limpa arquivo temporário", async (
   await mediaService.cleanupUpload(file);
   await assert.rejects(fs.access(filePath));
   await fs.rm(directory, { recursive: true, force: true });
+});
+
+test("converte gravação WebM do navegador para OGG/Opus", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "nsw-webm-"));
+  const inputPath = path.join(directory, "browser-recording");
+  let converted;
+  try {
+    await execFileAsync(ffmpegPath, [
+      "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono",
+      "-t", "0.1", "-c:a", "libopus", "-f", "webm", inputPath,
+    ]);
+    const stat = await fs.stat(inputPath);
+    const input = { path: inputPath, size: stat.size, mimetype: "audio/webm;codecs=opus", originalname: "gravacao.webm" };
+    assert.equal((await mediaService.validateUpload(input, "audio")).mimeType, "audio/webm");
+    converted = await mediaService.transcodeWebmToOgg(input);
+    assert.equal(converted.mimetype, "audio/ogg");
+    assert.equal(converted.originalname, "gravacao.ogg");
+    assert.equal(await mediaService.sniffMime(converted.path, converted.mimetype), "audio/ogg");
+  } finally {
+    await mediaService.cleanupUpload(converted);
+    await fs.rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("rejeita MIME inválido e arquivo acima do limite", async () => {

@@ -1,6 +1,7 @@
 const MEDIA_RULES = {
   image: { maxBytes: 5 * 1024 * 1024, mimeTypes: ["image/jpeg", "image/png"] },
-  audio: { maxBytes: 16 * 1024 * 1024, mimeTypes: ["audio/aac", "audio/mp4", "audio/mpeg", "audio/amr", "audio/ogg"] },
+  // WebM is accepted only as browser input and converted to OGG/Opus before Meta upload.
+  audio: { maxBytes: 16 * 1024 * 1024, mimeTypes: ["audio/aac", "audio/mp4", "audio/mpeg", "audio/amr", "audio/ogg", "audio/webm"] },
   video: { maxBytes: 16 * 1024 * 1024, mimeTypes: ["video/mp4", "video/3gpp"] },
   document: {
     maxBytes: 100 * 1024 * 1024,
