@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 process.env.WHATSAPP_VERIFY_TOKEN = "local-test-token";
+process.env.PRIVACY_CONTACT_EMAIL = "privacidade@nortesulsementes.com";
 const app = require("../src/server");
 
 let server;
@@ -60,4 +61,29 @@ test("POST /api/messages/text valida os campos sem chamar a Meta", async () => {
     body: JSON.stringify({ to: "inválido", text: "Teste" }),
   });
   assert.equal(response.status, 400);
+});
+
+for (const path of [
+  "/politica-de-privacidade",
+  "/termos-de-servico",
+  "/exclusao-de-dados",
+]) {
+  test(`GET ${path} retorna uma página HTML pública`, async () => {
+    const response = await fetch(`${baseUrl}${path}`);
+    const body = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type"), /^text\/html/);
+    assert.match(body, /Norte Sul Sementes LTDA/);
+    assert.match(body, /Norte Sul Chat/);
+    assert.doesNotMatch(body, /google-analytics|googletagmanager/i);
+  });
+}
+
+test("página de exclusão exibe o email configurado", async () => {
+  const response = await fetch(`${baseUrl}/exclusao-de-dados`);
+  const body = await response.text();
+
+  assert.match(body, /privacidade@nortesulsementes\.com/);
+  assert.match(body, /mailto:privacidade@nortesulsementes\.com/);
 });

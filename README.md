@@ -32,6 +32,7 @@ WHATSAPP_ACCESS_TOKEN=token-de-acesso-fornecido-pela-meta
 WHATSAPP_PHONE_NUMBER_ID=id-do-numero-no-novo-app
 WHATSAPP_WABA_ID=id-da-conta-whatsapp-business
 META_GRAPH_API_VERSION=v25.0
+PRIVACY_CONTACT_EMAIL=privacidade@exemplo.com
 ```
 
 - `WHATSAPP_VERIFY_TOKEN`: valor secreto criado por você; deve ser igual ao informado na configuração do webhook na Meta.
@@ -40,8 +41,19 @@ META_GRAPH_API_VERSION=v25.0
 - `WHATSAPP_PHONE_NUMBER_ID`: ID do número usado na URL de envio.
 - `WHATSAPP_WABA_ID`: ID da WABA, reservado para uso futuro; nenhuma configuração é alterada por este projeto.
 - `META_GRAPH_API_VERSION`: versão da Graph API usada no envio manual.
+- `PRIVACY_CONTACT_EMAIL`: email exibido na página de solicitação de exclusão de dados; pode ficar vazio.
 
 O arquivo `.env` é ignorado pelo Git. Tokens e segredos não são registrados nos logs.
+
+## Páginas legais
+
+As páginas públicas usadas na configuração do aplicativo Meta são:
+
+- Política de Privacidade: `https://whatsapp-api.nortesulsementes.com/politica-de-privacidade`
+- Termos de Serviço: `https://whatsapp-api.nortesulsementes.com/termos-de-servico`
+- Exclusão de Dados: `https://whatsapp-api.nortesulsementes.com/exclusao-de-dados`
+
+Elas não exigem login, não utilizam banco de dados, formulários, cookies, trackers ou ferramentas de analytics.
 
 ## Endpoints e testes
 
