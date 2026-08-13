@@ -1,5 +1,10 @@
 const logger = require("../utils/logger");
 
+function maskRecipient(to) {
+  if (to.length <= 8) return "*".repeat(to.length);
+  return `${to.slice(0, 4)}${"*".repeat(to.length - 8)}${to.slice(-4)}`;
+}
+
 function requiredEnvironment(name) {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`Variável de ambiente obrigatória ausente: ${name}`);
@@ -28,6 +33,19 @@ async function sendTextMessage(to, text) {
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    const metaError = data?.error || {};
+    logger.error("whatsapp_message_send_failed", {
+      to: maskRecipient(to),
+      metaHttpStatus: response.status,
+      metaError: {
+        message: metaError.message || null,
+        type: metaError.type || null,
+        code: metaError.code || null,
+        errorSubcode: metaError.error_subcode || null,
+        fbtraceId: metaError.fbtrace_id || null,
+      },
+    });
+
     const error = new Error("A API da Meta recusou o envio da mensagem.");
     error.status = response.status;
     error.metaResponse = data;
@@ -35,10 +53,11 @@ async function sendTextMessage(to, text) {
   }
 
   logger.info("whatsapp_message_sent", {
-    to,
+    to: maskRecipient(to),
+    metaHttpStatus: response.status,
     messageId: data.messages?.[0]?.id || null,
   });
   return data;
 }
 
-module.exports = { sendTextMessage };
+module.exports = { sendTextMessage, maskRecipient };
