@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 process.env.WHATSAPP_VERIFY_TOKEN = "local-test-token";
 process.env.PRIVACY_CONTACT_EMAIL = "privacidade@nortesulsementes.com";
 process.env.FRONTEND_URLS = '["https://chat.nortesulsementes.com"]';
+process.env.INTERNAL_API_KEY = "internal-test-key";
 const app = require("../src/server");
 
 let server;
@@ -96,31 +97,26 @@ test("POST /webhook/whatsapp registra metadados seguros antes do processamento",
 test("POST /api/messages/text valida os campos sem chamar a Meta", async () => {
   const response = await fetch(`${baseUrl}/api/messages/text`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-API-Key": "internal-test-key" },
     body: JSON.stringify({ to: "inválido", text: "Teste" }),
   });
   assert.equal(response.status, 400);
 });
 
 test("protege /api com X-API-Key quando configurada", async () => {
-  process.env.INTERNAL_API_KEY = "internal-test-key";
-  try {
-    const unauthorized = await fetch(`${baseUrl}/api/messages/text`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
-    assert.equal(unauthorized.status, 401);
+  const unauthorized = await fetch(`${baseUrl}/api/messages/text`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  assert.equal(unauthorized.status, 401);
 
-    const authorized = await fetch(`${baseUrl}/api/messages/text`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-API-Key": "internal-test-key" },
-      body: JSON.stringify({}),
-    });
-    assert.equal(authorized.status, 400);
-  } finally {
-    delete process.env.INTERNAL_API_KEY;
-  }
+  const authorized = await fetch(`${baseUrl}/api/messages/text`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-API-Key": "internal-test-key" },
+    body: JSON.stringify({}),
+  });
+  assert.equal(authorized.status, 400);
 });
 
 test("CORS permite origem da whitelist e rejeita origem desconhecida", async () => {
