@@ -54,6 +54,44 @@ test("POST /webhook/whatsapp aceita payload inesperado sem falhar", async () => 
   assert.equal(response.status, 200);
 });
 
+test("POST /webhook/whatsapp registra metadados seguros antes do processamento", async () => {
+  const records = [];
+  const originalLog = console.log;
+  console.log = (line) => records.push(JSON.parse(line));
+
+  try {
+    const response = await fetch(`${baseUrl}/webhook/whatsapp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "User-Agent": "auditoria-local/1.0",
+      },
+      body: JSON.stringify({ object: "test" }),
+    });
+    assert.equal(response.status, 200);
+    await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    console.log = originalLog;
+  }
+
+  const rawRequest = records.find((record) => record.event === "raw_webhook_request");
+  assert.deepEqual(
+    {
+      method: rawRequest?.method,
+      path: rawRequest?.path,
+      contentType: rawRequest?.contentType,
+      userAgent: rawRequest?.userAgent,
+    },
+    {
+      method: "POST",
+      path: "/webhook/whatsapp",
+      contentType: "application/json",
+      userAgent: "auditoria-local/1.0",
+    },
+  );
+  assert.equal("authorization" in rawRequest, false);
+});
+
 test("POST /api/messages/text valida os campos sem chamar a Meta", async () => {
   const response = await fetch(`${baseUrl}/api/messages/text`, {
     method: "POST",

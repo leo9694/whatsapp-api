@@ -5,6 +5,7 @@ const helmet = require("helmet");
 const whatsappRoutes = require("./routes/whatsapp.routes");
 const legalRoutes = require("./routes/legal.routes");
 const logger = require("./utils/logger");
+const webhookRequestLogger = require("./middleware/webhookRequestLogger");
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
@@ -12,6 +13,7 @@ const host = process.env.HOST?.trim() || "127.0.0.1";
 
 app.disable("x-powered-by");
 app.use(helmet());
+app.use("/webhook/whatsapp", webhookRequestLogger);
 app.use(express.json({ limit: "2mb" }));
 
 app.get("/health", (_req, res) => res.status(200).json({ status: "ok" }));
