@@ -11,32 +11,62 @@ function requiredEnvironment(name) {
   return value;
 }
 
-async function sendTextMessage(to, text) {
-  const accessToken = requiredEnvironment("WHATSAPP_ACCESS_TOKEN");
-  const phoneNumberId = requiredEnvironment("WHATSAPP_PHONE_NUMBER_ID");
-  const apiVersion = process.env.META_GRAPH_API_VERSION?.trim() || "v25.0";
-  const url = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
+class MetaApiError extends Error {
+  constructor(message, status, metaResponse) {
+    super(message);
+    this.name = "MetaApiError";
+    this.status = status >= 500 ? 502 : status;
+    this.metaHttpStatus = status;
+    this.metaResponse = metaResponse;
+  }
+}
 
+function getConfiguration() {
+  return {
+    accessToken: requiredEnvironment("WHATSAPP_ACCESS_TOKEN"),
+    phoneNumberId: requiredEnvironment("WHATSAPP_PHONE_NUMBER_ID"),
+    apiVersion: process.env.META_GRAPH_API_VERSION?.trim() || "v25.0",
+  };
+}
+
+async function graphRequest(url, options = {}) {
+  const { accessToken } = getConfiguration();
   const response = await fetch(url, {
-    method: "POST",
+    ...options,
     headers: {
       Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...options.headers,
     },
-    body: JSON.stringify({
-      messaging_product: "whatsapp",
-      to,
-      type: "text",
-      text: { body: text },
-    }),
   });
-
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const metaError = data?.error || {};
+  if (!response.ok) throw new MetaApiError("A API da Meta recusou a solicitação.", response.status, data);
+  return { data, status: response.status };
+}
+
+async function sendMessage(to, message) {
+  const { phoneNumberId, apiVersion } = getConfiguration();
+  const url = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
+  return graphRequest(url, {
+    method: "POST",
+    body: JSON.stringify({ messaging_product: "whatsapp", to, ...message }),
+  });
+}
+
+async function sendTextMessage(to, text) {
+  try {
+    const { data, status } = await sendMessage(to, { type: "text", text: { body: text } });
+    logger.info("whatsapp_message_sent", {
+      to: maskRecipient(to),
+      metaHttpStatus: status,
+      messageId: data.messages?.[0]?.id || null,
+    });
+    return data;
+  } catch (error) {
+    const metaError = error.metaResponse?.error || {};
     logger.error("whatsapp_message_send_failed", {
       to: maskRecipient(to),
-      metaHttpStatus: response.status,
+      metaHttpStatus: error.metaHttpStatus || null,
       metaError: {
         message: metaError.message || null,
         type: metaError.type || null,
@@ -46,18 +76,59 @@ async function sendTextMessage(to, text) {
       },
     });
 
-    const error = new Error("A API da Meta recusou o envio da mensagem.");
-    error.status = response.status;
-    error.metaResponse = data;
     throw error;
   }
-
-  logger.info("whatsapp_message_sent", {
-    to: maskRecipient(to),
-    metaHttpStatus: response.status,
-    messageId: data.messages?.[0]?.id || null,
-  });
-  return data;
 }
 
-module.exports = { sendTextMessage, maskRecipient };
+async function sendImageMessage(to, mediaId, caption) {
+  return (await sendMessage(to, { type: "image", image: { id: mediaId, ...(caption ? { caption } : {}) } })).data;
+}
+
+async function sendDocumentMessage(to, mediaId, caption, filename) {
+  return (await sendMessage(to, {
+    type: "document",
+    document: { id: mediaId, ...(caption ? { caption } : {}), ...(filename ? { filename } : {}) },
+  })).data;
+}
+
+async function sendAudioMessage(to, mediaId) {
+  return (await sendMessage(to, { type: "audio", audio: { id: mediaId } })).data;
+}
+
+async function sendVideoMessage(to, mediaId, caption) {
+  return (await sendMessage(to, { type: "video", video: { id: mediaId, ...(caption ? { caption } : {}) } })).data;
+}
+
+async function markMessageAsRead(messageId) {
+  const { phoneNumberId, apiVersion } = getConfiguration();
+  const url = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
+  return (await graphRequest(url, {
+    method: "POST",
+    body: JSON.stringify({ messaging_product: "whatsapp", status: "read", message_id: messageId }),
+  })).data;
+}
+
+async function getMediaUrl(mediaId) {
+  const { apiVersion } = getConfiguration();
+  return (await graphRequest(`https://graph.facebook.com/${apiVersion}/${encodeURIComponent(mediaId)}`)).data;
+}
+
+async function downloadMedia(url) {
+  const { accessToken } = getConfiguration();
+  const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!response.ok) throw new MetaApiError("Não foi possível baixar a mídia da Meta.", response.status, {});
+  return { buffer: Buffer.from(await response.arrayBuffer()), contentType: response.headers.get("content-type") };
+}
+
+module.exports = {
+  sendTextMessage,
+  sendImageMessage,
+  sendDocumentMessage,
+  sendAudioMessage,
+  sendVideoMessage,
+  markMessageAsRead,
+  getMediaUrl,
+  downloadMedia,
+  maskRecipient,
+  MetaApiError,
+};

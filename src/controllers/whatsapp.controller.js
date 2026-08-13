@@ -1,6 +1,6 @@
 const logger = require("../utils/logger");
 const messageDeduplicator = require("../utils/messageDeduplicator");
-const whatsappService = require("../services/whatsapp.service");
+const messageService = require("../services/message.service");
 
 function verifyWebhook(req, res) {
   const mode = req.query["hub.mode"];
@@ -20,7 +20,7 @@ function verifyWebhook(req, res) {
   return res.sendStatus(403);
 }
 
-function processWebhookPayload(payload) {
+async function processWebhookPayload(payload) {
   logger.info("webhook_payload_received", {
     object: payload?.object || null,
     payload,
@@ -67,6 +67,7 @@ function processWebhookPayload(payload) {
           text: message?.text?.body || null,
           contactProfileName: contact?.profile?.name || null,
         });
+        await messageService.processInboundMessage({ message, contacts });
       }
 
       for (const status of statuses) {
@@ -79,6 +80,7 @@ function processWebhookPayload(payload) {
           recipientId: status?.recipient_id || null,
           statusTimestamp: status?.timestamp || null,
         });
+        await messageService.processStatus(status);
       }
     }
   }
@@ -87,40 +89,17 @@ function processWebhookPayload(payload) {
 function receiveWebhook(req, res) {
   res.sendStatus(200);
 
-  setImmediate(() => {
+  setImmediate(async () => {
     try {
-      processWebhookPayload(req.body);
+      await processWebhookPayload(req.body);
     } catch (error) {
       logger.error("webhook_processing_failed", { message: error.message });
     }
   });
 }
 
-async function sendTextMessage(req, res, next) {
-  try {
-    const { to, text } = req.body || {};
-    if (typeof to !== "string" || !/^\d{8,15}$/.test(to.trim())) {
-      return res.status(400).json({
-        error: "O campo 'to' deve conter de 8 a 15 dígitos, incluindo o código do país.",
-      });
-    }
-
-    if (typeof text !== "string" || !text.trim() || text.length > 4096) {
-      return res.status(400).json({
-        error: "O campo 'text' deve ser uma string entre 1 e 4096 caracteres.",
-      });
-    }
-
-    const result = await whatsappService.sendTextMessage(to.trim(), text.trim());
-    return res.status(200).json(result);
-  } catch (error) {
-    return next(error);
-  }
-}
-
 module.exports = {
   verifyWebhook,
   receiveWebhook,
   processWebhookPayload,
-  sendTextMessage,
 };

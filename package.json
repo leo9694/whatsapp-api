@@ -7,17 +7,26 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate:deploy": "prisma migrate deploy"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "cors": "^2.8.6",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "helmet": "^8.0.0"
+    "express-rate-limit": "^8.6.2",
+    "helmet": "^8.0.0",
+    "prisma": "^6.19.3",
+    "socket.io": "^4.8.3",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "nodemon": "^3.1.9"
+    "nodemon": "^3.1.9",
+    "socket.io-client": "^4.8.3"
   }
 }

@@ -1,0 +1,77 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ConversationStatus {
+  OPEN
+  CLOSED
+  ARCHIVED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageStatus {
+  RECEIVED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+model Contact {
+  id            Int            @id @default(autoincrement())
+  waId          String         @unique
+  phone         String
+  name          String?
+  profileName   String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  conversations Conversation[]
+}
+
+model Conversation {
+  id             Int                @id @default(autoincrement())
+  contactId      Int
+  status         ConversationStatus @default(OPEN)
+  assignedUserId String?
+  unreadCount    Int                @default(0)
+  lastMessageAt  DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  contact        Contact            @relation(fields: [contactId], references: [id], onDelete: Restrict)
+  messages       Message[]
+
+  @@index([contactId])
+  @@index([lastMessageAt])
+  @@index([status, lastMessageAt])
+}
+
+model Message {
+  id               Int              @id @default(autoincrement())
+  wamid            String?          @unique
+  conversationId   Int
+  direction        MessageDirection
+  type             String
+  text             String?
+  mediaId          String?
+  mediaUrl         String?
+  mimeType         String?
+  caption          String?
+  status           MessageStatus
+  messageTimestamp DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  conversation     Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([messageTimestamp])
+  @@index([conversationId, messageTimestamp])
+}
