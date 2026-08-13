@@ -119,6 +119,21 @@ test("protege /api com X-API-Key quando configurada", async () => {
   assert.equal(authorized.status, 400);
 });
 
+for (const [method, path] of [
+  ["GET", "/api/templates"],
+  ["POST", "/api/templates/preview"],
+  ["GET", "/api/media/media-123"],
+  ["POST", "/api/conversations/1/messages/image"],
+]) {
+  test(`${method} ${path} exige autenticação`, async () => {
+    const response = await fetch(`${baseUrl}${path}`, { method });
+    assert.equal(response.status, 401);
+    const body = await response.json();
+    assert.equal(body.success, false);
+    assert.equal(body.error.code, "UNAUTHORIZED");
+  });
+}
+
 test("CORS permite origem da whitelist e rejeita origem desconhecida", async () => {
   const allowed = await fetch(`${baseUrl}/health`, { headers: { Origin: "https://chat.nortesulsementes.com" } });
   assert.equal(allowed.headers.get("access-control-allow-origin"), "https://chat.nortesulsementes.com");

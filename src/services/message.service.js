@@ -4,6 +4,7 @@ const conversationRepository = require("../repositories/conversation.repository"
 const messageRepository = require("../repositories/message.repository");
 const socket = require("../sockets/socket");
 const logger = require("../utils/logger");
+const { toMessageDto } = require("../utils/messageDto");
 
 const MEDIA_TYPES = new Set(["image", "document", "audio", "video", "sticker"]);
 const STATUS_MAP = { sent: "SENT", delivered: "DELIVERED", read: "READ", failed: "FAILED" };
@@ -26,7 +27,10 @@ function extractContent(message) {
     text,
     mediaId: media.id || null,
     mimeType: media.mime_type || null,
+    filename: media.filename || null,
     caption: media.caption || null,
+    mediaSha256: media.sha256 || null,
+    voice: type === "audio" ? Boolean(media.voice) : null,
   };
 }
 
@@ -68,12 +72,12 @@ async function processInboundMessage({ message, contacts = [] }, dependencies = 
     });
 
     if (result.isNewConversation) socket.emit("conversation:new", { conversation: result.conversation });
-    socket.emit("message:new", { conversationId: result.conversation.id, message: result.message });
+    socket.emit("message:new", { conversationId: result.conversation.id, message: toMessageDto(result.message) });
     socket.emit("conversation:updated", {
       conversationId: result.conversation.id,
       unreadCount: result.conversation.unreadCount,
       lastMessageAt: result.conversation.lastMessageAt,
-      lastMessage: result.message,
+      lastMessage: toMessageDto(result.message),
     });
     return result;
   } catch (error) {

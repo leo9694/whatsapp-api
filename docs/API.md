@@ -117,3 +117,151 @@ socket.on("message:new", ({ conversationId, message }) => {
 ```
 
 Enquanto a autenticação definitiva não existir, a conexão Socket.IO também exige a chave interna quando configurada. Use esse fluxo apenas em um backend/BFF; não publique a chave no bundle do navegador.
+
+## Templates
+
+### `GET /api/templates`
+
+Consulta todos os templates da WABA, seguindo a paginação da Graph API. Aceita `status`, `language`, `category`, `search`, `page`, `limit` e `refresh=true`. O cache em memória dura cinco minutos.
+
+```js
+async function listTemplates() {
+  const response = await fetch(`${API}/api/templates?status=APPROVED`, { headers: authHeaders });
+  return response.json();
+}
+```
+
+### `GET /api/templates/:name?language=pt_BR`
+
+Retorna o template normalizado e o objeto original sanitizado, com header, body, placeholders, exemplos, footer e botões.
+
+### `POST /api/templates/preview`
+
+Não envia mensagens.
+
+```js
+async function previewTemplate() {
+  const response = await fetch(`${API}/api/templates/preview`, {
+    method: "POST",
+    headers: { ...authHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: "pedido_aprovado",
+      language: "pt_BR",
+      parameters: { body: ["Leonardo", "12345"] },
+    }),
+  });
+  return response.json();
+}
+```
+
+### `POST /api/conversations/:id/messages/template`
+
+Envia somente templates existentes com status `APPROVED`.
+
+```js
+async function sendTemplate(conversationId, templateName, language, components) {
+  return fetch(`${API}/api/conversations/${conversationId}/messages/template`, {
+    method: "POST",
+    headers: { ...authHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify({ templateName, language, components }),
+  }).then((response) => response.json());
+}
+```
+
+## Mídias
+
+Rotas:
+
+- `GET /api/media/:mediaId`
+- `POST /api/conversations/:id/messages/image`
+- `POST /api/conversations/:id/messages/document`
+- `POST /api/conversations/:id/messages/video`
+- `POST /api/conversations/:id/messages/audio`
+
+Os uploads são `multipart/form-data` com o campo `file`. Imagem/vídeo/documento aceitam `caption`; documento aceita `filename`; áudio aceita `voice=true|false`.
+
+```js
+async function sendMedia(conversationId, kind, file, fields = {}) {
+  const form = new FormData();
+  form.append("file", file);
+  for (const [key, value] of Object.entries(fields)) form.append(key, String(value));
+  return fetch(`${API}/api/conversations/${conversationId}/messages/${kind}`, {
+    method: "POST",
+    headers: authHeaders,
+    body: form,
+  }).then((response) => response.json());
+}
+
+const sendImage = (id, file, caption) => sendMedia(id, "image", file, { caption });
+const sendDocument = (id, file, caption, filename) => sendMedia(id, "document", file, { caption, filename });
+const sendVideo = (id, file, caption) => sendMedia(id, "video", file, { caption });
+const sendAudio = (id, file, voice = false) => sendMedia(id, "audio", file, { voice });
+```
+
+Formatos e limites aplicados conforme a documentação atual da Meta:
+
+| Tipo | MIME types | Limite |
+|---|---|---:|
+| Imagem | `image/jpeg`, `image/png` | 5 MB |
+| Áudio | AAC, MP4, MPEG, AMR, OGG/Opus | 16 MB |
+| Vídeo | MP4/H.264 + AAC, 3GPP | 16 MB |
+| Documento | TXT, PDF, DOC/DOCX, XLS/XLSX, PPT/PPTX | 100 MB |
+
+O backend faz verificação básica da assinatura do arquivo, usa nomes temporários aleatórios e remove o arquivo após sucesso ou erro. Não há cache permanente de mídia nesta versão; a URL temporária da Meta não é persistida nem entregue ao frontend.
+
+### Download e reprodução autenticados
+
+Como `<audio src>` e `<video src>` não enviam `X-API-Key`, busque um Blob autenticado:
+
+```js
+async function getMediaBlob(mediaUrl) {
+  const response = await fetch(`${API}${mediaUrl}`, { headers: authHeaders });
+  if (!response.ok) throw new Error("Falha ao obter mídia");
+  return response.blob();
+}
+
+async function playAudio(mediaUrl, audioElement) {
+  const blob = await getMediaBlob(mediaUrl);
+  const objectUrl = URL.createObjectURL(blob);
+  audioElement.src = objectUrl;
+  audioElement.onended = () => URL.revokeObjectURL(objectUrl);
+  await audioElement.play();
+}
+```
+
+Para imagem use o Blob em `img.src`; para vídeo em `video.src`; para documentos crie um `<a download>` usando a URL de objeto.
+
+Mensagens de mídia emitidas em `message:new` incluem apenas uma URL interna:
+
+```json
+{
+  "conversationId": 123,
+  "message": {
+    "type": "audio",
+    "media": {
+      "mediaId": "...",
+      "mimeType": "audio/ogg",
+      "voice": true,
+      "url": "/api/media/MEDIA_ID"
+    }
+  }
+}
+```
+
+### Áudio e voice messages
+
+O payload da Cloud API para áudio usa o mesmo objeto `audio` por media ID. Para mensagens de voz, prefira OGG com codec Opus. O backend não instala FFmpeg nem transcoda; formatos de `MediaRecorder` incompatíveis são rejeitados e devem ser convertidos antes do upload.
+
+## Respostas das novas rotas
+
+Sucesso:
+
+```json
+{ "success": true, "data": {} }
+```
+
+Erro:
+
+```json
+{ "success": false, "error": { "code": "VALIDATION_ERROR", "message": "Dados inválidos." } }
+```

@@ -1,4 +1,7 @@
 const logger = require("../utils/logger");
+const fs = require("fs");
+const axios = require("axios");
+const FormData = require("form-data");
 
 function maskRecipient(to) {
   if (to.length <= 8) return "*".repeat(to.length);
@@ -99,6 +102,17 @@ async function sendVideoMessage(to, mediaId, caption) {
   return (await sendMessage(to, { type: "video", video: { id: mediaId, ...(caption ? { caption } : {}) } })).data;
 }
 
+async function sendTemplateMessage(to, templateName, language, components = []) {
+  return (await sendMessage(to, {
+    type: "template",
+    template: {
+      name: templateName,
+      language: { code: language },
+      ...(components.length ? { components } : {}),
+    },
+  })).data;
+}
+
 async function markMessageAsRead(messageId) {
   const { phoneNumberId, apiVersion } = getConfiguration();
   const url = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
@@ -108,16 +122,72 @@ async function markMessageAsRead(messageId) {
   })).data;
 }
 
-async function getMediaUrl(mediaId) {
-  const { apiVersion } = getConfiguration();
-  return (await graphRequest(`https://graph.facebook.com/${apiVersion}/${encodeURIComponent(mediaId)}`)).data;
+async function listMessageTemplates() {
+  const { accessToken, apiVersion } = getConfiguration();
+  const wabaId = requiredEnvironment("WHATSAPP_WABA_ID");
+  const fields = "id,name,language,status,category,parameter_format,components,quality_score,rejected_reason,previous_category";
+  let url = `https://graph.facebook.com/${apiVersion}/${wabaId}/message_templates?limit=100&fields=${encodeURIComponent(fields)}`;
+  const templates = [];
+  let pages = 0;
+  while (url && pages < 100) {
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new MetaApiError("Não foi possível consultar os templates.", response.status, data);
+    if (Array.isArray(data.data)) templates.push(...data.data);
+    url = data.paging?.next || null;
+    pages += 1;
+  }
+  return templates;
 }
 
-async function downloadMedia(url) {
+async function getMediaMetadata(mediaId) {
+  const { apiVersion, phoneNumberId } = getConfiguration();
+  const url = `https://graph.facebook.com/${apiVersion}/${encodeURIComponent(mediaId)}?phone_number_id=${encodeURIComponent(phoneNumberId)}`;
+  return (await graphRequest(url)).data;
+}
+
+async function downloadMedia(mediaId) {
   const { accessToken } = getConfiguration();
-  const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-  if (!response.ok) throw new MetaApiError("Não foi possível baixar a mídia da Meta.", response.status, {});
-  return { buffer: Buffer.from(await response.arrayBuffer()), contentType: response.headers.get("content-type") };
+  const metadata = await getMediaMetadata(mediaId);
+  const mediaUrl = new URL(metadata.url);
+  const trustedSuffixes = [".facebook.com", ".facebook.net", ".fbcdn.net", ".fbsbx.com"];
+  if (mediaUrl.protocol !== "https:" || !trustedSuffixes.some((suffix) => mediaUrl.hostname.endsWith(suffix))) {
+    throw new MetaApiError("A Meta retornou uma URL de mídia inválida.", 502, {});
+  }
+  try {
+    const response = await axios.get(mediaUrl.toString(), {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      responseType: "stream",
+      timeout: 30000,
+      maxRedirects: 3,
+    });
+    return { stream: response.data, headers: response.headers, metadata };
+  } catch (error) {
+    const status = error.response?.status || 502;
+    throw new MetaApiError("Não foi possível baixar a mídia da Meta.", status, error.response?.data || {});
+  }
+}
+
+async function uploadMedia({ filePath, mimeType, filename }) {
+  const { accessToken, apiVersion, phoneNumberId } = getConfiguration();
+  const form = new FormData();
+  form.append("messaging_product", "whatsapp");
+  form.append("file", fs.createReadStream(filePath), { contentType: mimeType, filename });
+  try {
+    const response = await axios.post(
+      `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/media`,
+      form,
+      {
+        headers: { Authorization: `Bearer ${accessToken}`, ...form.getHeaders() },
+        maxBodyLength: Infinity,
+        timeout: 120000,
+      },
+    );
+    return response.data;
+  } catch (error) {
+    const status = error.response?.status || 502;
+    throw new MetaApiError("Não foi possível enviar a mídia para a Meta.", status, error.response?.data || {});
+  }
 }
 
 module.exports = {
@@ -126,9 +196,12 @@ module.exports = {
   sendDocumentMessage,
   sendAudioMessage,
   sendVideoMessage,
+  sendTemplateMessage,
   markMessageAsRead,
-  getMediaUrl,
+  listMessageTemplates,
+  getMediaMetadata,
   downloadMedia,
+  uploadMedia,
   maskRecipient,
   MetaApiError,
 };

@@ -75,6 +75,8 @@ npm run prisma:migrate:deploy
 
 Em produção, use migrations versionadas com `prisma migrate deploy`; não substitua esse fluxo por `prisma db push`.
 
+O backend também oferece consulta/preview de templates aprovados, envio de templates por conversa, upload de imagens, documentos, vídeos e áudios, além de proxy autenticado para mídias recebidas. Consulte exemplos completos em [`docs/API.md`](docs/API.md).
+
 ## Endpoints e testes
 
 Verifique a saúde do serviço:

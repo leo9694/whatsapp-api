@@ -55,21 +55,28 @@ model Conversation {
 }
 
 model Message {
-  id               Int              @id @default(autoincrement())
-  wamid            String?          @unique
-  conversationId   Int
-  direction        MessageDirection
-  type             String
-  text             String?
-  mediaId          String?
-  mediaUrl         String?
-  mimeType         String?
-  caption          String?
-  status           MessageStatus
-  messageTimestamp DateTime?
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-  conversation     Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  id                 Int              @id @default(autoincrement())
+  wamid              String?          @unique
+  conversationId     Int
+  direction          MessageDirection
+  type               String
+  text               String?
+  mediaId            String?
+  mediaUrl           String?
+  mimeType           String?
+  filename           String?
+  caption            String?
+  mediaSha256        String?
+  voice              Boolean?
+  durationSeconds    Int?
+  templateName       String?
+  templateLanguage   String?
+  templateComponents Json?
+  status             MessageStatus
+  messageTimestamp   DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  conversation       Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId])
   @@index([messageTimestamp])

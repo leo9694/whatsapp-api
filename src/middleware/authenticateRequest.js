@@ -12,7 +12,9 @@ function isValidApiKey(providedKey) {
 
 function authenticateRequest(req, res, next) {
   const providedKey = req.get("X-API-Key") || "";
-  if (!isValidApiKey(providedKey)) return res.status(401).json({ error: "Não autorizado." });
+  if (!isValidApiKey(providedKey)) {
+    return res.status(401).json({ success: false, error: { code: "UNAUTHORIZED", message: "Não autorizado." } });
+  }
   return next();
 }
 

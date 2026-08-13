@@ -1,5 +1,4 @@
 const logger = require("../utils/logger");
-const messageDeduplicator = require("../utils/messageDeduplicator");
 const messageService = require("../services/message.service");
 
 function verifyWebhook(req, res) {
@@ -46,14 +45,6 @@ async function processWebhookPayload(payload) {
       });
 
       for (const message of messages) {
-        if (messageDeduplicator.isDuplicate(message?.id)) {
-          logger.warn("duplicate_message_ignored", {
-            messageId: message?.id || null,
-            phoneNumberId,
-          });
-          continue;
-        }
-
         const contact = contacts.find((item) => item?.wa_id === message?.from) || contacts[0];
         logger.info("whatsapp_message_received", {
           object: payload?.object || null,
@@ -67,7 +58,10 @@ async function processWebhookPayload(payload) {
           text: message?.text?.body || null,
           contactProfileName: contact?.profile?.name || null,
         });
-        await messageService.processInboundMessage({ message, contacts });
+        const result = await messageService.processInboundMessage({ message, contacts });
+        if (result?.duplicate) {
+          logger.warn("duplicate_message_ignored", { messageId: message?.id || null, phoneNumberId });
+        }
       }
 
       for (const status of statuses) {
