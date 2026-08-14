@@ -12,6 +12,30 @@ Retorna a disponibilidade do banco, do Socket.IO e a presença da configuração
 
 ## Conversas
 
+### `POST /api/conversations`
+
+Cria ou recupera somente o contato e uma conversa local `OPEN`. Esta operação **não envia mensagem à Meta**. O telefone é normalizado para dígitos e deve conter DDI, DDD e número.
+
+```json
+{
+  "name": "Leo teste",
+  "phone": "556696988891"
+}
+```
+
+Retorna HTTP `201` quando cria a conversa e `200` quando reutiliza uma conversa `OPEN`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "conversation": { "id": 123, "status": "OPEN" },
+    "contact": { "id": 45, "name": "Leo teste", "waId": "556696988891" },
+    "created": true
+  }
+}
+```
+
 ### `GET /api/conversations`
 
 Query params:
@@ -30,11 +54,57 @@ Query params:
 
 ### `GET /api/conversations/:id`
 
-Retorna conversa e contato.
+Retorna conversa, contato e `serviceWindow`.
+
+### Janela de atendimento
+
+Toda conversa retornada pela API inclui:
+
+```json
+{
+  "serviceWindow": {
+    "conversationInitiated": true,
+    "initiatedAt": "2026-08-14T12:00:00.000Z",
+    "initialTemplateWamid": "wamid...",
+    "initialTemplateStatus": "DELIVERED",
+    "waitingForCustomerReply": true,
+    "canSendFreeform": false,
+    "requiresTemplate": true,
+    "openedAt": null,
+    "expiresAt": null
+  }
+}
+```
+
+Enviar um template marca a conversa como iniciada e `waitingForCustomerReply=true`, mas não abre a janela livre. Somente uma mensagem real `INBOUND` do cliente define `openedAt`, `expiresAt = inbound + 24 horas` e `canSendFreeform=true`. Cada nova mensagem inbound renova as 24 horas. Após a expiração, `canSendFreeform=false` e `requiresTemplate=true`; não é necessário job para encerrar a janela.
+
+Por compatibilidade, a resposta também inclui `canSendFreeText` e `metaWindow`. O frontend deve preferir `serviceWindow` e `canSendFreeform` em novas implementações.
 
 ### `GET /api/conversations/:id/messages`
 
 Aceita `page` e `limit`. Cada página é devolvida em ordem cronológica para renderização no chat; a paginação busca primeiro as mensagens mais recentes.
+
+Mensagens de template são persistidas imediatamente após a Meta retornar o `wamid` e podem ser reconstruídas sem consultar novamente a Meta:
+
+```json
+{
+  "id": 123,
+  "wamid": "wamid...",
+  "direction": "OUTBOUND",
+  "type": "template",
+  "status": "DELIVERED",
+  "text": "Olá Leonardo, seu pedido 123 foi aprovado.",
+  "template": {
+    "name": "pedido_aprovado",
+    "language": "pt_BR",
+    "category": "UTILITY",
+    "header": "Pedido 123",
+    "body": "Olá Leonardo, seu pedido 123 foi aprovado.",
+    "footer": "Norte Sul Sementes",
+    "buttons": []
+  }
+}
+```
 
 ### `POST /api/conversations/:id/messages`
 

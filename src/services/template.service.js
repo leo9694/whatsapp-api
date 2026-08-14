@@ -98,6 +98,43 @@ function applyValues(text, values = []) {
   return (text || "").replace(/\{\{(\d+)\}\}/g, (match, index) => values[Number(index) - 1] ?? match);
 }
 
+function parameterValue(parameter) {
+  if (parameter?.text !== undefined) return String(parameter.text);
+  if (parameter?.currency?.fallback_value !== undefined) return String(parameter.currency.fallback_value);
+  if (parameter?.date_time?.fallback_value !== undefined) return String(parameter.date_time.fallback_value);
+  return undefined;
+}
+
+function parametersFromComponents(components = []) {
+  const result = { header: [], body: [], buttons: {} };
+  for (const component of Array.isArray(components) ? components : []) {
+    const type = String(component?.type || "").toLowerCase();
+    const values = (component?.parameters || []).map(parameterValue);
+    if (type === "header" || type === "body") result[type] = values;
+    if (type === "button") result.buttons[String(component.index ?? "0")] = values;
+  }
+  return result;
+}
+
+function renderTemplate(template, components = []) {
+  const parameters = parametersFromComponents(components);
+  const buttons = (template.buttons || []).map((button) => ({
+    ...button,
+    url: button.url ? applyValues(button.url, parameters.buttons[String(button.index)] || []) : null,
+  }));
+  return {
+    name: template.name,
+    language: template.language,
+    category: template.category || null,
+    header: template.header?.text ? applyValues(template.header.text, parameters.header) : null,
+    headerFormat: template.header?.format || null,
+    body: applyValues(template.body?.text, parameters.body),
+    footer: template.footer || null,
+    buttons,
+    components,
+  };
+}
+
 async function previewTemplate({ name, language, parameters = {} }, dependencies = {}) {
   const found = await findTemplate(name, language, dependencies);
   const { template } = found;
@@ -124,4 +161,7 @@ function clearTemplateCache() {
   cache = { expiresAt: 0, templates: [] };
 }
 
-module.exports = { normalizeTemplate, listTemplates, findTemplate, previewTemplate, clearTemplateCache, placeholders };
+module.exports = {
+  normalizeTemplate, listTemplates, findTemplate, previewTemplate, clearTemplateCache, placeholders,
+  parametersFromComponents, renderTemplate,
+};

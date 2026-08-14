@@ -5,6 +5,7 @@ const messageRepository = require("../repositories/message.repository");
 const socket = require("../sockets/socket");
 const logger = require("../utils/logger");
 const { toMessageDto } = require("../utils/messageDto");
+const { toConversationDto } = require("../utils/conversationDto");
 
 const MEDIA_TYPES = new Set(["image", "document", "audio", "video", "sticker"]);
 const STATUS_MAP = { sent: "SENT", delivered: "DELIVERED", read: "READ", failed: "FAILED" };
@@ -71,15 +72,15 @@ async function processInboundMessage({ message, contacts = [] }, dependencies = 
       return { contact, conversation: updatedConversation, message: createdMessage, isNewConversation };
     });
 
-    if (result.isNewConversation) socket.emit("conversation:new", { conversation: result.conversation });
+    const conversationDto = toConversationDto(result.conversation);
+    if (result.isNewConversation) socket.emit("conversation:new", { conversation: conversationDto });
     socket.emit("message:new", { conversationId: result.conversation.id, message: toMessageDto(result.message) });
     socket.emit("conversation:updated", {
-      conversationId: result.conversation.id,
-      unreadCount: result.conversation.unreadCount,
-      lastMessageAt: result.conversation.lastMessageAt,
+      ...conversationDto,
+      conversationId: conversationDto.id,
       lastMessage: toMessageDto(result.message),
     });
-    return result;
+    return { ...result, conversation: conversationDto };
   } catch (error) {
     if (error?.code === "P2002" && message.id) {
       return { duplicate: true, message: await messageRepository.findByWamid(message.id, db) };
@@ -93,13 +94,25 @@ async function processStatus(status, db = prisma) {
   if (!status?.id || !mapped) return { ignored: true };
   const existing = await messageRepository.findByWamid(status.id, db);
   if (!existing) return { ignored: true, reason: "message_not_found" };
-  const updated = await messageRepository.updateStatusByWamid(status.id, mapped, db);
+  const result = await db.$transaction(async (tx) => {
+    const updated = await messageRepository.updateStatusByWamid(status.id, mapped, tx);
+    let conversation = await conversationRepository.findById(updated.conversationId, tx);
+    if (conversation?.initialTemplateWamid === status.id) {
+      conversation = await conversationRepository.updateInitialTemplateStatus(conversation.id, mapped, tx);
+    }
+    return { updated, conversation };
+  });
+  const updated = result.updated;
   socket.emit("message:status", {
     conversationId: updated.conversationId,
     messageId: updated.id,
     wamid: updated.wamid,
     status: updated.status,
   });
+  if (result.conversation) {
+    const conversationDto = toConversationDto(result.conversation);
+    socket.emit("conversation:updated", { ...conversationDto, conversationId: conversationDto.id });
+  }
   return updated;
 }
 

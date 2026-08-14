@@ -4,6 +4,7 @@ const { messageSendLimiter } = require("../middleware/rateLimiter");
 
 const router = express.Router();
 router.get("/api/conversations", controller.list);
+router.post("/api/conversations", controller.create);
 router.get("/api/conversations/:id", controller.get);
 router.get("/api/conversations/:id/messages", controller.messages);
 router.post("/api/conversations/:id/messages", messageSendLimiter, controller.sendMessage);

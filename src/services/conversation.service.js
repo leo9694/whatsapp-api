@@ -8,6 +8,16 @@ const logger = require("../utils/logger");
 const templateService = require("./template.service");
 const mediaService = require("./media.service");
 const { toMessageDto } = require("../utils/messageDto");
+const contactRepository = require("../repositories/contact.repository");
+const { toConversationDto } = require("../utils/conversationDto");
+
+function assertFreeTextWindow(conversation) {
+  const dto = toConversationDto(conversation);
+  if (dto.requiresTemplate) {
+    throw new AppError("A janela de atendimento da Meta esta encerrada. Envie um template aprovado para iniciar a conversa.", 400);
+  }
+  return dto.serviceWindow;
+}
 
 async function listConversations({ page, limit, search, status }, db = prisma) {
   const [data, total] = await conversationRepository.list({
@@ -17,7 +27,9 @@ async function listConversations({ page, limit, search, status }, db = prisma) {
     status,
   }, db);
   return {
-    data: data.map(({ messages, ...conversation }) => ({ ...conversation, lastMessage: toMessageDto(messages[0] || null) })),
+    data: data.map(({ messages, ...conversation }) => toConversationDto(conversation, {
+      lastMessage: toMessageDto(messages[0] || null),
+    })),
     pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
   };
 }
@@ -25,7 +37,29 @@ async function listConversations({ page, limit, search, status }, db = prisma) {
 async function getConversation(id, db = prisma) {
   const conversation = await conversationRepository.findById(id, db);
   if (!conversation) throw new AppError("Conversa não encontrada.", 404);
-  return conversation;
+  return toConversationDto(conversation);
+}
+
+function normalizeWhatsappNumber(value) {
+  const number = String(value || "").replace(/\D/g, "");
+  if (!/^[1-9]\d{9,14}$/.test(number)) {
+    throw new AppError("Informe um numero de WhatsApp valido com DDI e DDD.", 400);
+  }
+  return number;
+}
+
+async function createConversation({ name, phone }, db = prisma) {
+  const waId = normalizeWhatsappNumber(phone);
+  const result = await db.$transaction(async (tx) => {
+    const contact = await contactRepository.upsertByWaId({ waId, phone: waId, name: name || undefined }, tx);
+    let conversation = await conversationRepository.findOpenByContactId(contact.id, tx);
+    const created = !conversation;
+    if (created) conversation = await conversationRepository.createForContact(contact.id, tx);
+    const complete = await conversationRepository.findById(conversation.id, tx);
+    return { conversation: toConversationDto(complete), contact, created };
+  });
+  if (result.created) socket.emit("conversation:new", { conversation: result.conversation });
+  return result;
 }
 
 async function listMessages(id, { page, limit }, db = prisma) {
@@ -45,6 +79,7 @@ async function sendText(id, text, dependencies = {}) {
   const db = dependencies.db || prisma;
   const send = dependencies.sendTextMessage || whatsappService.sendTextMessage;
   const conversation = await getConversation(id, db);
+  assertFreeTextWindow(conversation);
   const meta = await send(conversation.contact.waId, text);
   const wamid = meta.messages?.[0]?.id || null;
   const now = new Date();
@@ -55,11 +90,11 @@ async function sendText(id, text, dependencies = {}) {
     status: "SENT",
     messageTimestamp: now,
   }, db);
-  emitOutbound(id, message, now);
+  emitOutbound(id, message, now, await getConversation(id, db));
   return message;
 }
 
-async function persistOutbound(conversationId, data, db = prisma) {
+async function persistOutbound(conversationId, data, db = prisma, conversationUpdate) {
   const timestamp = data.messageTimestamp || new Date();
   return db.$transaction(async (tx) => {
     const created = await messageRepository.create({
@@ -67,15 +102,23 @@ async function persistOutbound(conversationId, data, db = prisma) {
       direction: "OUTBOUND",
       ...data,
     }, tx);
-    await conversationRepository.updateLastMessageAt(conversationId, timestamp, tx);
+    if (conversationUpdate === "template") {
+      await conversationRepository.updateAfterTemplate(conversationId, {
+        lastMessageAt: timestamp, wamid: data.wamid, status: data.status,
+      }, tx);
+    } else {
+      await conversationRepository.updateLastMessageAt(conversationId, timestamp, tx);
+    }
     return created;
   });
 }
 
-function emitOutbound(conversationId, message, lastMessageAt) {
+function emitOutbound(conversationId, message, lastMessageAt, conversation) {
   const dto = toMessageDto(message);
   socket.emit("message:new", { conversationId, message: dto });
-  socket.emit("conversation:updated", { conversationId, lastMessageAt, lastMessage: dto });
+  socket.emit("conversation:updated", {
+    ...(conversation || {}), conversationId, lastMessageAt, lastMessage: dto,
+  });
 }
 
 async function sendTemplate(id, input, dependencies = {}) {
@@ -86,18 +129,23 @@ async function sendTemplate(id, input, dependencies = {}) {
   const found = await findTemplate(input.templateName, input.language);
   if (found.template.status !== "APPROVED") throw new AppError("Somente templates aprovados podem ser enviados.", 400);
   const meta = await send(conversation.contact.waId, input.templateName, input.language, input.components || []);
+  const wamid = meta.messages?.[0]?.id || null;
+  if (!wamid) throw new AppError("A Meta aceitou a solicitação sem retornar o ID da mensagem.", 502);
   const now = new Date();
+  const rendered = templateService.renderTemplate(found.template, input.components || []);
   const message = await persistOutbound(id, {
-    wamid: meta.messages?.[0]?.id || null,
+    wamid,
     type: "template",
-    text: null,
+    text: rendered.body || rendered.header || input.templateName,
     status: "SENT",
     messageTimestamp: now,
     templateName: input.templateName,
     templateLanguage: input.language,
     templateComponents: input.components || [],
-  }, db);
-  emitOutbound(id, message, now);
+    templateData: rendered,
+    renderedText: rendered.body || null,
+  }, db, "template");
+  emitOutbound(id, message, now, await getConversation(id, db));
   return message;
 }
 
@@ -105,6 +153,7 @@ async function sendMedia(id, kind, file, options = {}, dependencies = {}) {
   const db = dependencies.db || prisma;
   const upload = dependencies.upload || mediaService.upload;
   const conversation = await getConversation(id, db);
+  assertFreeTextWindow(conversation);
   const uploaded = await upload(file, kind, dependencies);
   const senders = {
     image: dependencies.sendImageMessage || whatsappService.sendImageMessage,
@@ -129,7 +178,7 @@ async function sendMedia(id, kind, file, options = {}, dependencies = {}) {
     caption: options.caption || null,
     voice: kind === "audio" ? Boolean(options.voice) : null,
   }, db);
-  emitOutbound(id, message, now);
+  emitOutbound(id, message, now, await getConversation(id, db));
   return message;
 }
 
@@ -161,6 +210,6 @@ async function changeStatus(id, status, db = prisma) {
 }
 
 module.exports = {
-  listConversations, getConversation, listMessages, sendText, sendTemplate, sendMedia,
-  markRead, changeStatus, persistOutbound,
+  listConversations, getConversation, createConversation, listMessages, sendText, sendTemplate, sendMedia,
+  markRead, changeStatus, persistOutbound, normalizeWhatsappNumber, assertFreeTextWindow,
 };

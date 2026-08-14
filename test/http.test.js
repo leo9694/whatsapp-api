@@ -6,6 +6,7 @@ process.env.PRIVACY_CONTACT_EMAIL = "privacidade@nortesulsementes.com";
 process.env.FRONTEND_URLS = '["https://chat.nortesulsementes.com"]';
 process.env.INTERNAL_API_KEY = "internal-test-key";
 const app = require("../src/server");
+const conversationService = require("../src/services/conversation.service");
 
 let server;
 let baseUrl;
@@ -119,9 +120,47 @@ test("protege /api com X-API-Key quando configurada", async () => {
   assert.equal(authorized.status, 400);
 });
 
+test("POST /api/conversations responde 201/200 conforme criação ou reutilização", async () => {
+  const originalCreate = conversationService.createConversation;
+  let calls = 0;
+  conversationService.createConversation = async ({ name, phone }) => {
+    calls += 1;
+    const created = calls === 1;
+    return {
+      conversation: { id: 10, status: "OPEN", serviceWindow: { canSendFreeform: false, requiresTemplate: true } },
+      contact: { id: 20, name, phone, waId: phone },
+      created,
+    };
+  };
+  try {
+    for (const expectedStatus of [201, 200]) {
+      const response = await fetch(`${baseUrl}/api/conversations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-API-Key": "internal-test-key" },
+        body: JSON.stringify({ name: "Leo teste", phone: "556696988891" }),
+      });
+      const body = await response.json();
+      assert.equal(response.status, expectedStatus);
+      assert.equal(body.success, true);
+      assert.equal(body.data.created, expectedStatus === 201);
+    }
+  } finally { conversationService.createConversation = originalCreate; }
+});
+
+test("POST /api/conversations rejeita nome ou telefone inválido sem acessar serviço", async () => {
+  const response = await fetch(`${baseUrl}/api/conversations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-API-Key": "internal-test-key" },
+    body: JSON.stringify({ name: "L", phone: "9999" }),
+  });
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).error.code, "VALIDATION_ERROR");
+});
+
 for (const [method, path] of [
   ["GET", "/api/templates"],
   ["POST", "/api/templates/preview"],
+  ["POST", "/api/conversations"],
   ["GET", "/api/media/media-123"],
   ["POST", "/api/conversations/1/messages/image"],
 ]) {

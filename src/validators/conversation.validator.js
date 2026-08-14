@@ -10,5 +10,11 @@ const conversationListSchema = paginationSchema.extend({
   status: z.enum(["OPEN", "CLOSED", "ARCHIVED"]).optional(),
 });
 const conversationStatusSchema = z.object({ status: z.enum(["OPEN", "CLOSED", "ARCHIVED"]) });
+const createConversationSchema = z.object({
+  name: z.string().trim().min(2).max(160),
+  phone: z.string().trim().min(8).max(24),
+});
 
-module.exports = { idSchema, paginationSchema, conversationListSchema, conversationStatusSchema };
+module.exports = {
+  idSchema, paginationSchema, conversationListSchema, conversationStatusSchema, createConversationSchema,
+};

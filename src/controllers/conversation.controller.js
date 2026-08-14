@@ -4,8 +4,10 @@ const {
   paginationSchema,
   conversationListSchema,
   conversationStatusSchema,
+  createConversationSchema,
 } = require("../validators/conversation.validator");
 const { textMessageSchema } = require("../validators/message.validator");
+const { success } = require("../utils/apiResponse");
 
 async function list(req, res, next) {
   try {
@@ -16,6 +18,13 @@ async function list(req, res, next) {
 async function get(req, res, next) {
   try {
     return res.json(await conversationService.getConversation(idSchema.parse(req.params.id)));
+  } catch (error) { return next(error); }
+}
+
+async function create(req, res, next) {
+  try {
+    const data = await conversationService.createConversation(createConversationSchema.parse(req.body));
+    return success(res, data, data.created ? 201 : 200);
   } catch (error) { return next(error); }
 }
 
@@ -50,4 +59,4 @@ async function changeStatus(req, res, next) {
   } catch (error) { return next(error); }
 }
 
-module.exports = { list, get, messages, sendMessage, read, changeStatus };
+module.exports = { list, get, create, messages, sendMessage, read, changeStatus };

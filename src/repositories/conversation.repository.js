@@ -45,15 +45,46 @@ function list({ skip, take, search, status }, db = prisma) {
 }
 
 function updateAfterInbound(id, lastMessageAt, db = prisma) {
+  const windowExpiresAt = new Date(lastMessageAt.getTime() + (24 * 60 * 60 * 1000));
   return db.conversation.update({
     where: { id },
-    data: { lastMessageAt, unreadCount: { increment: 1 } },
+    data: {
+      lastMessageAt,
+      unreadCount: { increment: 1 },
+      lastInboundAt: lastMessageAt,
+      customerServiceWindowOpenedAt: lastMessageAt,
+      customerServiceWindowExpiresAt: windowExpiresAt,
+      waitingForCustomerReply: false,
+    },
     include: { contact: true },
   });
 }
 
 function updateLastMessageAt(id, lastMessageAt, db = prisma) {
   return db.conversation.update({ where: { id }, data: { lastMessageAt }, include: { contact: true } });
+}
+
+function updateAfterTemplate(id, { lastMessageAt, wamid, status }, db = prisma) {
+  return db.conversation.update({
+    where: { id },
+    data: {
+      lastMessageAt,
+      conversationInitiated: true,
+      conversationInitiatedAt: lastMessageAt,
+      initialTemplateWamid: wamid,
+      initialTemplateStatus: status,
+      waitingForCustomerReply: true,
+    },
+    include: { contact: true },
+  });
+}
+
+function updateInitialTemplateStatus(id, initialTemplateStatus, db = prisma) {
+  return db.conversation.update({
+    where: { id },
+    data: { initialTemplateStatus },
+    include: { contact: true },
+  });
 }
 
 function markRead(id, db = prisma) {
@@ -71,6 +102,8 @@ module.exports = {
   list,
   updateAfterInbound,
   updateLastMessageAt,
+  updateAfterTemplate,
+  updateInitialTemplateStatus,
   markRead,
   updateStatus,
 };

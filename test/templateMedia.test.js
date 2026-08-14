@@ -14,6 +14,7 @@ const whatsappService = require("../src/services/whatsapp.service");
 const messageService = require("../src/services/message.service");
 const conversationService = require("../src/services/conversation.service");
 const mediaController = require("../src/controllers/media.controller");
+const socket = require("../src/sockets/socket");
 const { createFakePrisma } = require("./helpers/fakePrisma");
 const execFileAsync = promisify(execFile);
 
@@ -78,24 +79,69 @@ test("gera preview e informa parâmetros ausentes sem enviar à Meta", async () 
 
 async function seedConversation(db) {
   return messageService.processInboundMessage({
-    message: { id: "wamid.in", from: "5565999999999", timestamp: "1700000000", type: "text", text: { body: "Olá" } },
+    message: { id: "wamid.in", from: "5565999999999", timestamp: String(Math.floor(Date.now() / 1000)), type: "text", text: { body: "Olá" } },
     contacts: [{ wa_id: "5565999999999", profile: { name: "Cliente" } }],
   }, { db });
 }
 
 test("envia template aprovado com Meta mockada e persiste outbound", async () => {
   const db = createFakePrisma();
-  const seeded = await seedConversation(db);
-  const message = await conversationService.sendTemplate(seeded.conversation.id, {
-    templateName: "pedido_aprovado", language: "pt_BR", components: [],
-  }, {
-    db,
-    findTemplate: async () => ({ template: templateService.normalizeTemplate(approvedTemplate) }),
-    sendTemplateMessage: async () => ({ messages: [{ id: "wamid.template" }] }),
-  });
+  const created = await conversationService.createConversation({ name: "Leonardo", phone: "5565999999999" }, db);
+  const events = [];
+  const originalEmit = socket.emit;
+  socket.emit = (event, payload) => events.push({ event, payload });
+  let message;
+  try {
+    message = await conversationService.sendTemplate(created.conversation.id, {
+      templateName: "pedido_aprovado", language: "pt_BR",
+      components: [
+        { type: "header", parameters: [{ type: "text", text: "123" }] },
+        { type: "body", parameters: [{ type: "text", text: "Leonardo" }, { type: "text", text: "123" }] },
+      ],
+    }, {
+      db,
+      findTemplate: async () => ({ template: templateService.normalizeTemplate(approvedTemplate) }),
+      sendTemplateMessage: async () => ({ messages: [{ id: "wamid.template" }] }),
+    });
+  } finally { socket.emit = originalEmit; }
   assert.equal(message.type, "template");
   assert.equal(message.wamid, "wamid.template");
   assert.equal(message.templateName, "pedido_aprovado");
+  assert.equal(message.renderedText, "Olá Leonardo, seu pedido 123 foi aprovado.");
+  assert.equal(message.templateData.body, message.renderedText);
+  assert.equal(db.state.conversations[0].conversationInitiated, true);
+  assert.equal(db.state.conversations[0].initialTemplateWamid, "wamid.template");
+  assert.equal(db.state.conversations[0].initialTemplateStatus, "SENT");
+  assert.equal(db.state.conversations[0].waitingForCustomerReply, true);
+  assert.equal(db.state.conversations[0].customerServiceWindowOpenedAt, null);
+  assert.equal(db.state.conversations[0].customerServiceWindowExpiresAt, null);
+  assert.ok(events.some((item) => item.event === "message:new" && item.payload.message.template.body === message.renderedText));
+  assert.ok(events.some((item) => item.event === "conversation:updated"));
+
+  const statusEvents = [];
+  const originalStatusEmit = socket.emit;
+  socket.emit = (event, payload) => statusEvents.push({ event, payload });
+  try {
+    await messageService.processStatus({ id: "wamid.template", status: "delivered" }, db);
+    assert.equal(db.state.conversations[0].initialTemplateStatus, "DELIVERED");
+    await messageService.processStatus({ id: "wamid.template", status: "read" }, db);
+    assert.equal(db.state.conversations[0].initialTemplateStatus, "READ");
+  } finally { socket.emit = originalStatusEmit; }
+  assert.equal(statusEvents.filter((item) => item.event === "message:status").length, 2);
+  assert.equal(statusEvents.filter((item) => item.event === "conversation:updated").length, 2);
+
+  const reply = await messageService.processInboundMessage({
+    message: { id: "wamid.customer.reply", from: "5565999999999", timestamp: String(Math.floor(Date.now() / 1000)), type: "text", text: { body: "Obrigado" } },
+    contacts: [{ wa_id: "5565999999999", profile: { name: "Leonardo" } }],
+  }, { db });
+  assert.equal(reply.conversation.waitingForCustomerReply, false);
+  assert.equal(reply.conversation.serviceWindow.canSendFreeform, true);
+  assert.equal(reply.conversation.serviceWindow.requiresTemplate, false);
+
+  const history = await conversationService.listMessages(created.conversation.id, { page: 1, limit: 30 }, db);
+  const templateMessage = history.data.find((item) => item.type === "template");
+  assert.equal(templateMessage.template.name, "pedido_aprovado");
+  assert.equal(templateMessage.template.body, "Olá Leonardo, seu pedido 123 foi aprovado.");
 });
 
 for (const [type, payload] of [

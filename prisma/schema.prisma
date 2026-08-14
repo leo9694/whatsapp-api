@@ -38,20 +38,30 @@ model Contact {
 }
 
 model Conversation {
-  id             Int                @id @default(autoincrement())
-  contactId      Int
-  status         ConversationStatus @default(OPEN)
-  assignedUserId String?
-  unreadCount    Int                @default(0)
-  lastMessageAt  DateTime?
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
-  contact        Contact            @relation(fields: [contactId], references: [id], onDelete: Restrict)
-  messages       Message[]
+  id                             Int                @id @default(autoincrement())
+  contactId                      Int
+  status                         ConversationStatus @default(OPEN)
+  assignedUserId                 String?
+  unreadCount                    Int                @default(0)
+  lastMessageAt                  DateTime?
+  conversationInitiated          Boolean            @default(false)
+  conversationInitiatedAt        DateTime?
+  initialTemplateWamid           String?
+  initialTemplateStatus          MessageStatus?
+  lastInboundAt                  DateTime?
+  customerServiceWindowOpenedAt  DateTime?
+  customerServiceWindowExpiresAt DateTime?
+  waitingForCustomerReply        Boolean            @default(false)
+  createdAt                      DateTime            @default(now())
+  updatedAt                      DateTime            @updatedAt
+  contact                        Contact             @relation(fields: [contactId], references: [id], onDelete: Restrict)
+  messages                       Message[]
 
   @@index([contactId])
   @@index([lastMessageAt])
   @@index([status, lastMessageAt])
+  @@index([initialTemplateWamid])
+  @@index([customerServiceWindowExpiresAt])
 }
 
 model Message {
@@ -72,6 +82,8 @@ model Message {
   templateName       String?
   templateLanguage   String?
   templateComponents Json?
+  templateData       Json?
+  renderedText       String?
   status             MessageStatus
   messageTimestamp   DateTime?
   createdAt          DateTime         @default(now())

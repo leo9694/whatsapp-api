@@ -34,7 +34,10 @@ function createFakePrisma() {
       async create({ data }) {
         const item = {
           id: next.conversation++, status: "OPEN", assignedUserId: null, unreadCount: 0,
-          lastMessageAt: null, createdAt: now(), updatedAt: now(), ...data,
+          lastMessageAt: null, conversationInitiated: false, conversationInitiatedAt: null,
+          initialTemplateWamid: null, initialTemplateStatus: null, lastInboundAt: null,
+          customerServiceWindowOpenedAt: null, customerServiceWindowExpiresAt: null,
+          waitingForCustomerReply: false, createdAt: now(), updatedAt: now(), ...data,
         };
         state.conversations.push(item);
         return { ...item };

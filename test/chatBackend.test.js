@@ -3,13 +3,14 @@ const assert = require("node:assert/strict");
 const { createFakePrisma } = require("./helpers/fakePrisma");
 const messageService = require("../src/services/message.service");
 const conversationService = require("../src/services/conversation.service");
+const socket = require("../src/sockets/socket");
 
 function inbound(id = "wamid.1", from = "5565999999999", type = "text") {
   return {
     message: {
       id,
       from,
-      timestamp: "1700000000",
+      timestamp: String(Math.floor(Date.now() / 1000)),
       type,
       ...(type === "text" ? { text: { body: "Olá" } } : {}),
     },
@@ -92,6 +93,74 @@ test("envia por conversationId com Meta mockada e salva outbound", async () => {
   assert.equal(destination, "5565999999999");
   assert.equal(message.direction, "OUTBOUND");
   assert.equal(message.status, "SENT");
+});
+
+test("cria contato/conversa, reutiliza OPEN e não chama a Meta", async () => {
+  const db = createFakePrisma();
+  const events = [];
+  const originalEmit = socket.emit;
+  socket.emit = (event, payload) => events.push({ event, payload });
+  let first;
+  let reused;
+  try {
+    first = await conversationService.createConversation({
+      name: "Contato novo", phone: "+55 (65) 99999-9999",
+    }, db);
+    reused = await conversationService.createConversation({
+      name: "Contato atualizado", phone: "5565999999999",
+    }, db);
+  } finally { socket.emit = originalEmit; }
+
+  assert.equal(first.created, true);
+  assert.equal(reused.created, false);
+  assert.equal(first.contact.waId, "5565999999999");
+  assert.equal(reused.contact.name, "Contato atualizado");
+  assert.equal(first.conversation.id, reused.conversation.id);
+  assert.equal(first.conversation.requiresTemplate, true);
+  assert.equal(db.state.contacts.length, 1);
+  assert.equal(db.state.conversations.length, 1);
+  assert.equal(db.state.messages.length, 0);
+  assert.equal(events.filter((item) => item.event === "conversation:new").length, 1);
+  await assert.rejects(
+    conversationService.sendText(first.conversation.id, "Olá", { db, sendTextMessage: async () => ({}) }),
+    /template aprovado/,
+  );
+});
+
+test("rejeita telefone sem DDI/DDD válido", async () => {
+  const db = createFakePrisma();
+  await assert.rejects(
+    conversationService.createConversation({ name: "Contato", phone: "99999-9999" }, db),
+    /WhatsApp valido/,
+  );
+});
+
+test("informa janela Meta fechada quando a Ãºltima mensagem do cliente passou de 24 horas", async () => {
+  const db = createFakePrisma();
+  const received = await messageService.processInboundMessage(inbound(), { db });
+  db.state.conversations[0].customerServiceWindowExpiresAt = new Date(Date.now() - 1000);
+  const conversation = await conversationService.getConversation(received.conversation.id, db);
+  assert.equal(conversation.requiresTemplate, true);
+  assert.equal(conversation.metaWindow.status, "CLOSED");
+});
+
+test("inbound abre e renova a janela de atendimento por 24 horas", async () => {
+  const db = createFakePrisma();
+  const firstAt = new Date(Date.now() - (60 * 60 * 1000));
+  const first = inbound("wamid.window.1");
+  first.message.timestamp = String(Math.floor(firstAt.getTime() / 1000));
+  const firstResult = await messageService.processInboundMessage(first, { db });
+  const firstExpiry = new Date(firstResult.conversation.serviceWindow.expiresAt);
+  assert.equal(firstResult.conversation.serviceWindow.canSendFreeform, true);
+
+  const secondAt = new Date();
+  const second = inbound("wamid.window.2");
+  second.message.timestamp = String(Math.floor(secondAt.getTime() / 1000));
+  const secondResult = await messageService.processInboundMessage(second, { db });
+  const secondExpiry = new Date(secondResult.conversation.serviceWindow.expiresAt);
+  assert.ok(secondExpiry > firstExpiry);
+  assert.equal(secondResult.conversation.waitingForCustomerReply, false);
+  assert.ok(Math.abs(secondExpiry.getTime() - (Math.floor(secondAt.getTime() / 1000) * 1000 + 86400000)) < 10);
 });
 
 test("propaga erro da Meta sem salvar mensagem outbound", async () => {
