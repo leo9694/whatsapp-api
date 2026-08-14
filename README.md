@@ -66,6 +66,8 @@ Elas não exigem login, não utilizam banco de dados, formulários, cookies, tra
 
 Os endpoints de conversas, mensagens, leitura, status da API e eventos Socket.IO estão documentados em [`docs/API.md`](docs/API.md). O backend persiste contatos, conversas e mensagens no PostgreSQL e usa `wamid` como chave de idempotência.
 
+Para conectar outro sistema, use o **[Guia de Integração](docs/INTEGRATION.md)**. Ele contém início rápido, fluxo completo de atendimento, exemplos cURL/JavaScript, cliente reutilizável, templates, mídias, Socket.IO, erros e checklist de segurança.
+
 Comandos do Prisma:
 
 ```bash
