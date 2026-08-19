@@ -5,6 +5,7 @@ const mediaService = require("../services/media.service");
 const whatsappService = require("../services/whatsapp.service");
 const { idSchema } = require("../validators/conversation.validator");
 const { success } = require("../utils/apiResponse");
+const { agentSchema } = require("../validators/conversation.validator");
 
 function parseVoice(value) {
   if (value === undefined) return false;
@@ -21,7 +22,14 @@ function sendUploaded(kind) {
         filename: typeof req.body?.filename === "string" ? mediaService.safeFilename(req.body.filename) : undefined,
         voice: parseVoice(req.body?.voice),
       };
-      const message = await conversationService.sendMedia(idSchema.parse(req.params.id), kind, req.file, options);
+      let agent;
+      if (req.body?.agent) {
+        let parsedAgent;
+        try { parsedAgent = JSON.parse(String(req.body.agent)); }
+        catch { throw new AppError("Identificacao do atendente invalida.", 400); }
+        agent = agentSchema.parse(parsedAgent);
+      }
+      const message = await conversationService.sendMedia(idSchema.parse(req.params.id), kind, req.file, options, agent);
       return success(res, message, 201);
     } catch (error) { return next(error); }
     finally { await mediaService.cleanupUpload(req.file); }

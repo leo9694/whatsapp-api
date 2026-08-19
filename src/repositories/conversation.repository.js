@@ -12,9 +12,11 @@ function findById(id, db = prisma) {
   return db.conversation.findUnique({ where: { id }, include: { contact: true } });
 }
 
-function list({ skip, take, search, status }, db = prisma) {
+function list({ skip, take, search, status, assignment, viewerId }, db = prisma) {
   const where = {
     ...(status ? { status } : {}),
+    ...(assignment === "MINE" ? { assignedUserId: viewerId } : {}),
+    ...(assignment === "UNASSIGNED" ? { assignedUserId: null } : {}),
     ...(search
       ? {
           contact: {
@@ -42,6 +44,18 @@ function list({ skip, take, search, status }, db = prisma) {
     }),
     db.conversation.count({ where }),
   ]);
+}
+
+function updateAssignment(id, data, db = prisma) {
+  return db.conversation.update({ where: { id }, data, include: { contact: true } });
+}
+
+function claimIfUnassigned(id, data, db = prisma) {
+  return db.conversation.updateMany({ where: { id, assignedUserId: null }, data });
+}
+
+function createAssignmentHistory(data, db = prisma) {
+  return db.conversationAssignment.create({ data });
 }
 
 function updateAfterInbound(id, lastMessageAt, db = prisma) {
@@ -95,8 +109,12 @@ function updateStatus(id, status, db = prisma) {
   return db.conversation.update({ where: { id }, data: { status }, include: { contact: true } });
 }
 
+function deleteById(id, db = prisma) {
+  return db.conversation.delete({ where: { id } });
+}
+
 module.exports = {
-  findOpenByContactId,
+  findOpenByContactId, deleteById,
   createForContact,
   findById,
   list,
@@ -106,4 +124,7 @@ module.exports = {
   updateInitialTemplateStatus,
   markRead,
   updateStatus,
+  updateAssignment,
+  claimIfUnassigned,
+  createAssignmentHistory,
 };

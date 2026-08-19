@@ -46,8 +46,13 @@ async function validateUpload(file, kind) {
   if (!rule) throw new AppError("Tipo de mídia não suportado.", 400);
   if (file.size > rule.maxBytes) throw new AppError(`Arquivo excede o limite de ${Math.floor(rule.maxBytes / 1024 / 1024)} MB.`, 413);
   const declaredMime = normalizeMime(file.mimetype);
+  const genericAudio = kind === "audio" && (!declaredMime || declaredMime === "application/octet-stream");
+  const detected = await sniffMime(file.path, genericAudio ? "audio/webm" : declaredMime);
+  if (genericAudio) {
+    if (!detected || !rule.mimeTypes.includes(detected)) throw new AppError("O arquivo enviado não contém áudio suportado.", 415);
+    return { mimeType: detected, filename: safeFilename(file.originalname), size: file.size };
+  }
   if (!rule.mimeTypes.includes(declaredMime)) throw new AppError("MIME type não suportado para este tipo de mídia.", 415);
-  const detected = await sniffMime(file.path, declaredMime);
   if (!detected || detected !== declaredMime) throw new AppError("O conteúdo do arquivo não corresponde ao MIME type informado.", 415);
   return { mimeType: detected, filename: safeFilename(file.originalname), size: file.size };
 }

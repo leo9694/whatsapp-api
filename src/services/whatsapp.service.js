@@ -83,6 +83,13 @@ async function sendTextMessage(to, text) {
   }
 }
 
+async function sendReactionMessage(to, messageId, emoji) {
+  return (await sendMessage(to, {
+    type: "reaction",
+    reaction: { message_id: messageId, emoji },
+  })).data;
+}
+
 async function sendImageMessage(to, mediaId, caption) {
   return (await sendMessage(to, { type: "image", image: { id: mediaId, ...(caption ? { caption } : {}) } })).data;
 }
@@ -192,6 +199,7 @@ async function uploadMedia({ filePath, mimeType, filename }) {
 
 module.exports = {
   sendTextMessage,
+  sendReactionMessage,
   sendImageMessage,
   sendDocumentMessage,
   sendAudioMessage,

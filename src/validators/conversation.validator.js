@@ -8,13 +8,30 @@ const paginationSchema = z.object({
 const conversationListSchema = paginationSchema.extend({
   search: z.string().trim().max(100).optional(),
   status: z.enum(["OPEN", "CLOSED", "ARCHIVED"]).optional(),
+  assignment: z.enum(["ALL", "MINE", "UNASSIGNED"]).default("MINE"),
+  viewerId: z.string().trim().min(1).max(64).optional(),
 });
-const conversationStatusSchema = z.object({ status: z.enum(["OPEN", "CLOSED", "ARCHIVED"]) });
+const agentSchema = z.object({
+  id: z.string().trim().min(1).max(64),
+  name: z.string().trim().min(1).max(160),
+  signature: z.string().trim().max(80).optional(),
+  director: z.boolean().optional(),
+}).strict();
+const conversationStatusSchema = z.object({
+  status: z.enum(["OPEN", "CLOSED", "ARCHIVED"]),
+  agent: agentSchema.optional(),
+}).strict();
+const assignmentSchema = z.object({
+  action: z.enum(["CLAIM", "TRANSFER", "RELEASE"]),
+  actor: agentSchema,
+  target: agentSchema.pick({ id: true, name: true }).optional(),
+}).strict();
 const createConversationSchema = z.object({
   name: z.string().trim().min(2).max(160),
   phone: z.string().trim().min(8).max(24),
 });
 
 module.exports = {
-  idSchema, paginationSchema, conversationListSchema, conversationStatusSchema, createConversationSchema,
+  agentSchema, assignmentSchema, idSchema, paginationSchema, conversationListSchema,
+  conversationStatusSchema, createConversationSchema,
 };

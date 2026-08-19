@@ -14,6 +14,7 @@ const whatsappService = require("../src/services/whatsapp.service");
 const messageService = require("../src/services/message.service");
 const conversationService = require("../src/services/conversation.service");
 const mediaController = require("../src/controllers/media.controller");
+const agent = { id: "72", name: "LEONARDO", signature: "Leonardo" };
 const socket = require("../src/sockets/socket");
 const { createFakePrisma } = require("./helpers/fakePrisma");
 const execFileAsync = promisify(execFile);
@@ -87,6 +88,7 @@ async function seedConversation(db) {
 test("envia template aprovado com Meta mockada e persiste outbound", async () => {
   const db = createFakePrisma();
   const created = await conversationService.createConversation({ name: "Leonardo", phone: "5565999999999" }, db);
+  await conversationService.changeAssignment(created.conversation.id, { action: "CLAIM", actor: agent, target: agent }, db);
   const events = [];
   const originalEmit = socket.emit;
   socket.emit = (event, payload) => events.push({ event, payload });
@@ -98,7 +100,7 @@ test("envia template aprovado com Meta mockada e persiste outbound", async () =>
         { type: "header", parameters: [{ type: "text", text: "123" }] },
         { type: "body", parameters: [{ type: "text", text: "Leonardo" }, { type: "text", text: "123" }] },
       ],
-    }, {
+    }, agent, {
       db,
       findTemplate: async () => ({ template: templateService.normalizeTemplate(approvedTemplate) }),
       sendTemplateMessage: async () => ({ messages: [{ id: "wamid.template" }] }),
@@ -201,6 +203,24 @@ test("converte gravação WebM do navegador para OGG/Opus", async () => {
   }
 });
 
+test("identifica gravação WebM quando o navegador declara MIME genérico", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "nsw-webm-generic-"));
+  const inputPath = path.join(directory, "gravacao.webm");
+  try {
+    await execFileAsync(ffmpegPath, [
+      "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono",
+      "-t", "0.1", "-c:a", "libopus", "-f", "webm", inputPath,
+    ]);
+    const stat = await fs.stat(inputPath);
+    const metadata = await mediaService.validateUpload({
+      path: inputPath, size: stat.size, mimetype: "application/octet-stream", originalname: "gravacao.webm"
+    }, "audio");
+    assert.equal(metadata.mimeType, "audio/webm");
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("rejeita MIME inválido e arquivo acima do limite", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "nsw-media-"));
   const filePath = path.join(directory, "file");
@@ -216,7 +236,7 @@ test("controller remove upload temporário quando envio falha", async () => {
   await fs.writeFile(filePath, Buffer.from([0xff, 0xd8, 0xff]));
   const originalSendMedia = conversationService.sendMedia;
   conversationService.sendMedia = async () => { throw new Error("Meta indisponível"); };
-  const req = { params: { id: "1" }, body: {}, file: { path: filePath, size: 3, mimetype: "image/jpeg", originalname: "x.jpg" } };
+  const req = { params: { id: "1" }, body: { agent: JSON.stringify(agent) }, file: { path: filePath, size: 3, mimetype: "image/jpeg", originalname: "x.jpg" } };
   const res = {};
   let receivedError;
   try {
@@ -233,7 +253,8 @@ test("envia image, document, video e audio com upload e Meta mockados", async ()
   for (const kind of ["image", "document", "video", "audio"]) {
     const db = createFakePrisma();
     const seeded = await seedConversation(db);
-    const message = await conversationService.sendMedia(seeded.conversation.id, kind, {}, { voice: kind === "audio" }, {
+    await conversationService.changeAssignment(seeded.conversation.id, { action: "CLAIM", actor: agent, target: agent }, db);
+    const message = await conversationService.sendMedia(seeded.conversation.id, kind, {}, { voice: kind === "audio" }, agent, {
       db,
       upload: async () => ({ mediaId: `media-${kind}`, mimeType: kind === "document" ? "application/pdf" : `${kind}/mock`, filename: `file.${kind}` }),
       [`send${kind[0].toUpperCase()}${kind.slice(1)}Message`]: async () => ({ messages: [{ id: `wamid.${kind}` }] }),
