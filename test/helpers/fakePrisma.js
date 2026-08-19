@@ -7,8 +7,8 @@ function matchesContactSearch(contact, search) {
 }
 
 function createFakePrisma() {
-  const state = { contacts: [], conversations: [], messages: [] };
-  const next = { contact: 1, conversation: 1, message: 1 };
+  const state = { contacts: [], conversations: [], messages: [], assignments: [] };
+  const next = { contact: 1, conversation: 1, message: 1, assignment: 1 };
   const now = () => new Date();
 
   const db = {
@@ -33,7 +33,8 @@ function createFakePrisma() {
       },
       async create({ data }) {
         const item = {
-          id: next.conversation++, status: "OPEN", assignedUserId: null, unreadCount: 0,
+          id: next.conversation++, status: "OPEN", assignedUserId: null, assignedUserName: null,
+          assignedAt: null, unreadCount: 0,
           lastMessageAt: null, conversationInitiated: false, conversationInitiatedAt: null,
           initialTemplateWamid: null, initialTemplateStatus: null, lastInboundAt: null,
           customerServiceWindowOpenedAt: null, customerServiceWindowExpiresAt: null,
@@ -61,9 +62,23 @@ function createFakePrisma() {
         if (include?.contact) result.contact = { ...state.contacts.find((contact) => contact.id === item.contactId) };
         return result;
       },
+      async updateMany({ where, data }) {
+        const items = state.conversations.filter((conversation) => conversation.id === where.id
+          && conversation.assignedUserId === where.assignedUserId);
+        items.forEach((item) => Object.assign(item, data, { updatedAt: now() }));
+        return { count: items.length };
+      },
+      async delete({ where }) {
+        const index = state.conversations.findIndex((conversation) => conversation.id === where.id);
+        if (index < 0) throw Object.assign(new Error("not found"), { code: "P2025" });
+        const [removed] = state.conversations.splice(index, 1);
+        state.messages = state.messages.filter((message) => message.conversationId !== where.id);
+        return { ...removed };
+      },
       async findMany({ where = {}, skip = 0, take = 30 }) {
         let items = state.conversations.filter((item) => {
           if (where.status && item.status !== where.status) return false;
+          if (Object.prototype.hasOwnProperty.call(where, "assignedUserId") && item.assignedUserId !== where.assignedUserId) return false;
           const contact = state.contacts.find((candidate) => candidate.id === item.contactId);
           const search = where.contact?.OR?.[0]?.name?.contains;
           return matchesContactSearch(contact, search);
@@ -83,10 +98,18 @@ function createFakePrisma() {
       async count({ where = {} }) {
         return state.conversations.filter((item) => {
           if (where.status && item.status !== where.status) return false;
+          if (Object.prototype.hasOwnProperty.call(where, "assignedUserId") && item.assignedUserId !== where.assignedUserId) return false;
           const contact = state.contacts.find((candidate) => candidate.id === item.contactId);
           const search = where.contact?.OR?.[0]?.name?.contains;
           return matchesContactSearch(contact, search);
         }).length;
+      },
+    },
+    conversationAssignment: {
+      async create({ data }) {
+        const item = { id: next.assignment++, createdAt: now(), ...data };
+        state.assignments.push(item);
+        return { ...item };
       },
     },
     message: {

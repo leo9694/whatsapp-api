@@ -4,6 +4,11 @@ const { createFakePrisma } = require("./helpers/fakePrisma");
 const messageService = require("../src/services/message.service");
 const conversationService = require("../src/services/conversation.service");
 const socket = require("../src/sockets/socket");
+const agent = { id: "72", name: "LEONARDO", signature: "Leonardo" };
+
+async function claim(db, conversationId) {
+  return conversationService.changeAssignment(conversationId, { action: "CLAIM", actor: agent, target: agent }, db);
+}
 
 function inbound(id = "wamid.1", from = "5565999999999", type = "text") {
   return {
@@ -51,6 +56,23 @@ test("aceita payload de tipo desconhecido sem falhar", async () => {
   assert.equal(result.message.text, null);
 });
 
+test("converte resposta de botão do template em texto inbound", async () => {
+  const db = createFakePrisma();
+  const result = await messageService.processInboundMessage({
+    message: {
+      id: "wamid.button.reply",
+      from: "5565999999999",
+      timestamp: String(Math.floor(Date.now() / 1000)),
+      type: "interactive",
+      interactive: { type: "button_reply", button_reply: { id: "confirmar", title: "Sim!" } },
+    },
+    contacts: [{ wa_id: "5565999999999", profile: { name: "Cliente Teste" } }],
+  }, { db });
+  assert.equal(result.message.type, "text");
+  assert.equal(result.message.text, "Sim!");
+  assert.equal(result.conversation.serviceWindow.canSendFreeform, true);
+});
+
 test("lista conversas com paginação, filtro por status e busca", async () => {
   const db = createFakePrisma();
   await messageService.processInboundMessage(inbound("wamid.1", "5565111111111"), { db });
@@ -60,7 +82,7 @@ test("lista conversas com paginação, filtro por status e busca", async () => {
   }, { db });
   db.state.conversations[0].status = "CLOSED";
 
-  const filtered = await conversationService.listConversations({ page: 1, limit: 30, search: "Maria", status: "OPEN" }, db);
+  const filtered = await conversationService.listConversations({ page: 1, limit: 30, search: "Maria", status: "OPEN", assignment: "ALL" }, db);
   assert.equal(filtered.data.length, 1);
   assert.equal(filtered.data[0].contact.profileName, "Maria Oliveira");
   assert.deepEqual(filtered.pagination, { page: 1, limit: 30, total: 1, totalPages: 1 });
@@ -82,8 +104,9 @@ test("marca conversa como lida e prepara mark-as-read na Meta", async () => {
 test("envia por conversationId com Meta mockada e salva outbound", async () => {
   const db = createFakePrisma();
   const received = await messageService.processInboundMessage(inbound(), { db });
+  await claim(db, received.conversation.id);
   let destination;
-  const message = await conversationService.sendText(received.conversation.id, "Resposta", {
+  const message = await conversationService.sendText(received.conversation.id, "Resposta", agent, {
     db,
     sendTextMessage: async (to) => {
       destination = to;
@@ -93,6 +116,43 @@ test("envia por conversationId com Meta mockada e salva outbound", async () => {
   assert.equal(destination, "5565999999999");
   assert.equal(message.direction, "OUTBOUND");
   assert.equal(message.status, "SENT");
+});
+
+test("envia reação para a mensagem da conversa e salva o vínculo", async () => {
+  const db = createFakePrisma();
+  const received = await messageService.processInboundMessage(inbound(), { db });
+  await claim(db, received.conversation.id);
+  let request;
+  const message = await conversationService.sendReaction(
+    received.conversation.id,
+    "wamid.1",
+    "👍",
+    agent,
+    {
+      db,
+      sendReactionMessage: async (to, messageId, emoji) => {
+        request = { to, messageId, emoji };
+        return { messages: [{ id: "wamid.reaction.outbound" }] };
+      },
+    },
+  );
+  assert.deepEqual(request, { to: "5565999999999", messageId: "wamid.1", emoji: "👍" });
+  assert.equal(message.type, "reaction");
+  assert.deepEqual(JSON.parse(message.text), { message_id: "wamid.1", emoji: "👍" });
+});
+
+test("não reage a mensagem que não pertence à conversa", async () => {
+  const db = createFakePrisma();
+  const first = await messageService.processInboundMessage(inbound("wamid.first", "5565111111111"), { db });
+  await messageService.processInboundMessage(inbound("wamid.other", "5565222222222"), { db });
+  await claim(db, first.conversation.id);
+  await assert.rejects(
+    conversationService.sendReaction(first.conversation.id, "wamid.other", "❤️", agent, {
+      db,
+      sendReactionMessage: async () => ({ messages: [{ id: "unused" }] }),
+    }),
+    /não pertence a esta conversa/,
+  );
 });
 
 test("cria contato/conversa, reutiliza OPEN e não chama a Meta", async () => {
@@ -121,8 +181,9 @@ test("cria contato/conversa, reutiliza OPEN e não chama a Meta", async () => {
   assert.equal(db.state.conversations.length, 1);
   assert.equal(db.state.messages.length, 0);
   assert.equal(events.filter((item) => item.event === "conversation:new").length, 1);
+  await claim(db, first.conversation.id);
   await assert.rejects(
-    conversationService.sendText(first.conversation.id, "Olá", { db, sendTextMessage: async () => ({}) }),
+    conversationService.sendText(first.conversation.id, "Olá", agent, { db, sendTextMessage: async () => ({}) }),
     /template aprovado/,
   );
 });
@@ -138,6 +199,7 @@ test("rejeita telefone sem DDI/DDD válido", async () => {
 test("informa janela Meta fechada quando a Ãºltima mensagem do cliente passou de 24 horas", async () => {
   const db = createFakePrisma();
   const received = await messageService.processInboundMessage(inbound(), { db });
+  await claim(db, received.conversation.id);
   db.state.conversations[0].customerServiceWindowExpiresAt = new Date(Date.now() - 1000);
   const conversation = await conversationService.getConversation(received.conversation.id, db);
   assert.equal(conversation.requiresTemplate, true);
@@ -166,8 +228,9 @@ test("inbound abre e renova a janela de atendimento por 24 horas", async () => {
 test("propaga erro da Meta sem salvar mensagem outbound", async () => {
   const db = createFakePrisma();
   const received = await messageService.processInboundMessage(inbound(), { db });
+  await claim(db, received.conversation.id);
   await assert.rejects(
-    conversationService.sendText(received.conversation.id, "Resposta", {
+    conversationService.sendText(received.conversation.id, "Resposta", agent, {
       db,
       sendTextMessage: async () => { throw Object.assign(new Error("Meta indisponível"), { status: 502 }); },
     }),
@@ -179,10 +242,21 @@ test("propaga erro da Meta sem salvar mensagem outbound", async () => {
 test("fecha, reabre e arquiva conversa", async () => {
   const db = createFakePrisma();
   const received = await messageService.processInboundMessage(inbound(), { db });
+  await claim(db, received.conversation.id);
   for (const status of ["CLOSED", "OPEN", "ARCHIVED"]) {
-    const updated = await conversationService.changeStatus(received.conversation.id, status, db);
+    const updated = await conversationService.changeStatus(received.conversation.id, status, agent, db);
     assert.equal(updated.status, status);
   }
+});
+
+test("exclui somente a conversa e suas mensagens, preservando o contato", async () => {
+  const db = createFakePrisma();
+  const received = await messageService.processInboundMessage(inbound(), { db });
+  const deleted = await conversationService.deleteConversation(received.conversation.id, db);
+  assert.equal(deleted.deleted, true);
+  assert.equal(db.state.conversations.length, 0);
+  assert.equal(db.state.messages.length, 0);
+  assert.equal(db.state.contacts.length, 1);
 });
 
 test("informa indisponibilidade do banco", async () => {
@@ -193,7 +267,35 @@ test("informa indisponibilidade do banco", async () => {
     },
   };
   await assert.rejects(
-    conversationService.listConversations({ page: 1, limit: 30 }, unavailableDb),
+    conversationService.listConversations({ page: 1, limit: 30, assignment: "ALL" }, unavailableDb),
     /database unavailable/,
   );
+});
+
+test("somente o atendente responsavel envia e a assinatura e persistida", async () => {
+  const db = createFakePrisma();
+  const received = await messageService.processInboundMessage(inbound(), { db });
+  await claim(db, received.conversation.id);
+  await assert.rejects(
+    conversationService.sendText(received.conversation.id, "Teste", { id: "99", name: "OUTRO" }, { db }),
+    /LEONARDO/,
+  );
+  const message = await conversationService.sendText(received.conversation.id, "Teste", agent, {
+    db, sendTextMessage: async (_to, text) => ({ messages: [{ id: text }] }),
+  });
+  assert.equal(message.text, "*Leonardo:*\nTeste");
+  assert.equal(message.senderUserId, "72");
+});
+
+test("nao permite que outro atendente tome uma conversa ja assumida", async () => {
+  const db = createFakePrisma();
+  const received = await messageService.processInboundMessage(inbound(), { db });
+  await claim(db, received.conversation.id);
+  await assert.rejects(
+    conversationService.changeAssignment(received.conversation.id, {
+      action: "CLAIM", actor: { id: "99", name: "OUTRO" }, target: { id: "99", name: "OUTRO" },
+    }, db),
+    /LEONARDO/,
+  );
+  assert.equal(db.state.conversations[0].assignedUserId, "72");
 });

@@ -16,9 +16,18 @@ function parseTimestamp(value) {
 }
 
 function extractContent(message) {
-  const type = typeof message?.type === "string" ? message.type : "unknown";
+  let type = typeof message?.type === "string" ? message.type : "unknown";
   const media = MEDIA_TYPES.has(type) ? message[type] || {} : {};
   let text = message?.text?.body || null;
+  if (type === "interactive") {
+    const reply = message.interactive?.button_reply || message.interactive?.list_reply;
+    text = reply?.title || reply?.description || reply?.id || null;
+    if (text) type = "text";
+  }
+  if (type === "button") {
+    text = message.button?.text || message.button?.payload || null;
+    if (text) type = "text";
+  }
   if (!text && ["location", "contacts", "reaction", "interactive", "button"].includes(type)) {
     const value = message[type] ?? message;
     text = JSON.stringify(value);

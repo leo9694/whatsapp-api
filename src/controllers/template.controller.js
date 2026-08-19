@@ -26,7 +26,8 @@ async function preview(req, res, next) {
 
 async function send(req, res, next) {
   try {
-    const data = await conversationService.sendTemplate(idSchema.parse(req.params.id), sendTemplateSchema.parse(req.body));
+    const input = sendTemplateSchema.parse(req.body);
+    const data = await conversationService.sendTemplate(idSchema.parse(req.params.id), input, input.agent);
     return success(res, data, 201);
   } catch (error) { return next(error); }
 }

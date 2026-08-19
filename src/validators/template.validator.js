@@ -1,4 +1,5 @@
 const { z } = require("zod");
+const { agentSchema } = require("./conversation.validator");
 
 const templateListSchema = z.object({
   status: z.string().trim().max(50).optional(),
@@ -23,6 +24,7 @@ const sendTemplateSchema = z.object({
   templateName: templateNameSchema,
   language: languageSchema,
   components: z.array(z.record(z.string(), z.unknown())).default([]),
+  agent: agentSchema.optional(),
 }).strict();
 
 module.exports = { templateListSchema, templateNameSchema, languageSchema, previewSchema, sendTemplateSchema };
