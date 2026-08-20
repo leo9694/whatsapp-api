@@ -103,8 +103,11 @@ async function processStatus(status, db = prisma) {
   if (!status?.id || !mapped) return { ignored: true };
   const existing = await messageRepository.findByWamid(status.id, db);
   if (!existing) return { ignored: true, reason: "message_not_found" };
+  const failureDetails = mapped === "FAILED" && Array.isArray(status.errors)
+    ? status.errors
+    : undefined;
   const result = await db.$transaction(async (tx) => {
-    const updated = await messageRepository.updateStatusByWamid(status.id, mapped, tx);
+    const updated = await messageRepository.updateStatusByWamid(status.id, mapped, failureDetails, tx);
     let conversation = await conversationRepository.findById(updated.conversationId, tx);
     if (conversation?.initialTemplateWamid === status.id) {
       conversation = await conversationRepository.updateInitialTemplateStatus(conversation.id, mapped, tx);
@@ -117,6 +120,7 @@ async function processStatus(status, db = prisma) {
     messageId: updated.id,
     wamid: updated.wamid,
     status: updated.status,
+    failureDetails: updated.failureDetails || null,
   });
   if (result.conversation) {
     const conversationDto = toConversationDto(result.conversation);

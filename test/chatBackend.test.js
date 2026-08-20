@@ -49,6 +49,15 @@ test("atualiza status de mensagem pelo wamid", async () => {
   assert.equal(updated.status, "READ");
 });
 
+test("preserva o motivo informado pela Meta quando o envio falha", async () => {
+  const db = createFakePrisma();
+  await messageService.processInboundMessage(inbound(), { db });
+  const errors = [{ code: 131026, title: "Message undeliverable", message: "Message undeliverable" }];
+  const updated = await messageService.processStatus({ id: "wamid.1", status: "failed", errors }, db);
+  assert.equal(updated.status, "FAILED");
+  assert.deepEqual(updated.failureDetails, errors);
+});
+
 test("aceita payload de tipo desconhecido sem falhar", async () => {
   const db = createFakePrisma();
   const result = await messageService.processInboundMessage(inbound("wamid.unknown", undefined, "future_type"), { db });

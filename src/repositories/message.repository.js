@@ -26,8 +26,10 @@ function listByConversation({ conversationId, skip, take }, db = prisma) {
   ]);
 }
 
-function updateStatusByWamid(wamid, status, db = prisma) {
-  return db.message.update({ where: { wamid }, data: { status } });
+function updateStatusByWamid(wamid, status, failureDetails, db = prisma) {
+  const data = { status };
+  if (failureDetails !== undefined) data.failureDetails = failureDetails;
+  return db.message.update({ where: { wamid }, data });
 }
 
 function findLatestInbound(conversationId, db = prisma) {
