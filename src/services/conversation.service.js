@@ -100,7 +100,21 @@ async function sendText(id, text, agent, dependencies = {}) {
   if (agent) assertAssigned(conversation, agent);
   assertFreeTextWindow(conversation);
   const outgoingText = agent ? signedText(text, agent) : text;
-  const meta = await send(conversation.contact.waId, outgoingText);
+  const replyToMessageId = String(dependencies.replyToMessageId || "").trim();
+  let replyContext = null;
+  if (replyToMessageId) {
+    const target = await messageRepository.findByWamid(replyToMessageId, db);
+    if (!target || String(target.conversationId) !== String(id)) {
+      throw new AppError("A mensagem selecionada para resposta não pertence a esta conversa.", 404);
+    }
+    replyContext = {
+      messageId: replyToMessageId,
+      text: target.text || target.caption || target.filename || "Mensagem",
+      senderName: target.senderUserName || (target.direction === "OUTBOUND" ? "Atendente" : conversation.contact.name || conversation.contact.profileName || "Contato"),
+      direction: target.direction,
+    };
+  }
+  const meta = await send(conversation.contact.waId, outgoingText, replyToMessageId);
   const wamid = meta.messages?.[0]?.id || null;
   const now = new Date();
   const message = await persistOutbound(id, {
@@ -109,6 +123,7 @@ async function sendText(id, text, agent, dependencies = {}) {
     text: outgoingText,
     senderUserId: agent ? String(agent.id) : null,
     senderUserName: agent?.name || null,
+    replyContext,
     status: "SENT",
     messageTimestamp: now,
   }, db);

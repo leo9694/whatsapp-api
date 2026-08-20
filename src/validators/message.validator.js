@@ -4,6 +4,7 @@ const { agentSchema } = require("./conversation.validator");
 
 const textMessageSchema = z.object({
   text: z.string().trim().min(1).max(4096),
+  replyToMessageId: z.string().trim().min(3).max(512).regex(/^[A-Za-z0-9._:+=/-]+$/).optional(),
   agent: agentSchema.optional(),
 }).strict();
 const reactionMessageSchema = z.object({

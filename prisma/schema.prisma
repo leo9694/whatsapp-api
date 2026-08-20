@@ -38,25 +38,25 @@ model Contact {
 }
 
 model Conversation {
-  id                             Int                @id @default(autoincrement())
+  id                             Int                      @id @default(autoincrement())
   contactId                      Int
-  status                         ConversationStatus @default(OPEN)
+  status                         ConversationStatus       @default(OPEN)
   assignedUserId                 String?
   assignedUserName               String?
   assignedAt                     DateTime?
-  unreadCount                    Int                @default(0)
+  unreadCount                    Int                      @default(0)
   lastMessageAt                  DateTime?
-  conversationInitiated          Boolean            @default(false)
+  conversationInitiated          Boolean                  @default(false)
   conversationInitiatedAt        DateTime?
   initialTemplateWamid           String?
   initialTemplateStatus          MessageStatus?
   lastInboundAt                  DateTime?
   customerServiceWindowOpenedAt  DateTime?
   customerServiceWindowExpiresAt DateTime?
-  waitingForCustomerReply        Boolean            @default(false)
-  createdAt                      DateTime            @default(now())
-  updatedAt                      DateTime            @updatedAt
-  contact                        Contact             @relation(fields: [contactId], references: [id], onDelete: Restrict)
+  waitingForCustomerReply        Boolean                  @default(false)
+  createdAt                      DateTime                 @default(now())
+  updatedAt                      DateTime                 @updatedAt
+  contact                        Contact                  @relation(fields: [contactId], references: [id], onDelete: Restrict)
   messages                       Message[]
   assignments                    ConversationAssignment[]
 
@@ -87,6 +87,7 @@ model Message {
   templateComponents Json?
   templateData       Json?
   renderedText       String?
+  replyContext       Json?
   senderUserId       String?
   senderUserName     String?
   status             MessageStatus

@@ -118,6 +118,24 @@ test("envia por conversationId com Meta mockada e salva outbound", async () => {
   assert.equal(message.status, "SENT");
 });
 
+test("responde uma mensagem da conversa e preserva o contexto", async () => {
+  const db = createFakePrisma();
+  const received = await messageService.processInboundMessage(inbound(), { db });
+  await claim(db, received.conversation.id);
+  let request;
+  const message = await conversationService.sendText(received.conversation.id, "Resposta", agent, {
+    db,
+    replyToMessageId: "wamid.1",
+    sendTextMessage: async (to, text, replyToMessageId) => {
+      request = { to, text, replyToMessageId };
+      return { messages: [{ id: "wamid.reply" }] };
+    },
+  });
+  assert.equal(request.replyToMessageId, "wamid.1");
+  assert.equal(message.replyContext.messageId, "wamid.1");
+  assert.equal(message.replyContext.text, "Olá");
+});
+
 test("envia reação para a mensagem da conversa e salva o vínculo", async () => {
   const db = createFakePrisma();
   const received = await messageService.processInboundMessage(inbound(), { db });

@@ -75,6 +75,7 @@ async function processInboundMessage({ message, contacts = [] }, dependencies = 
         direction: "INBOUND",
         status: "RECEIVED",
         messageTimestamp,
+        replyContext: await inboundReplyContext(message, conversation.id, tx),
         ...content,
       }, tx);
       const updatedConversation = await conversationRepository.updateAfterInbound(conversation.id, messageTimestamp, tx);
@@ -96,6 +97,21 @@ async function processInboundMessage({ message, contacts = [] }, dependencies = 
     }
     throw error;
   }
+}
+
+async function inboundReplyContext(message, conversationId, db) {
+  const messageId = String(message?.context?.id || "").trim();
+  if (!messageId) return null;
+  const target = await messageRepository.findByWamid(messageId, db);
+  if (!target || String(target.conversationId) !== String(conversationId)) {
+    return { messageId, text: "Mensagem", senderName: "", direction: "" };
+  }
+  return {
+    messageId,
+    text: target.text || target.caption || target.filename || "Mensagem",
+    senderName: target.senderUserName || (target.direction === "OUTBOUND" ? "Atendente" : "Contato"),
+    direction: target.direction,
+  };
 }
 
 async function processStatus(status, db = prisma) {

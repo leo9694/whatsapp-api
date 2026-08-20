@@ -41,8 +41,8 @@ async function messages(req, res, next) {
 async function sendMessage(req, res, next) {
   try {
     const id = idSchema.parse(req.params.id);
-    const { text, agent } = textMessageSchema.parse(req.body);
-    return res.status(201).json(await conversationService.sendText(id, text, agent));
+    const { text, replyToMessageId, agent } = textMessageSchema.parse(req.body);
+    return res.status(201).json(await conversationService.sendText(id, text, agent, { replyToMessageId }));
   } catch (error) { return next(error); }
 }
 

@@ -56,9 +56,13 @@ async function sendMessage(to, message) {
   });
 }
 
-async function sendTextMessage(to, text) {
+async function sendTextMessage(to, text, replyToMessageId = "") {
   try {
-    const { data, status } = await sendMessage(to, { type: "text", text: { body: text } });
+    const { data, status } = await sendMessage(to, {
+      type: "text",
+      text: { body: text },
+      ...(replyToMessageId ? { context: { message_id: replyToMessageId } } : {}),
+    });
     logger.info("whatsapp_message_sent", {
       to: maskRecipient(to),
       metaHttpStatus: status,
