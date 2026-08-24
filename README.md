@@ -2,7 +2,7 @@
 
 Backend Node.js 20+ com Express, PostgreSQL, Prisma e Socket.IO para receber o webhook oficial do WhatsApp Cloud API e oferecer uma API de atendimento ao futuro frontend do **Norte Sul Chat**.
 
-O projeto é deliberadamente passivo: ao iniciar, não chama a API da Meta, não registra, remove ou migra números, não assina `subscribed_apps`, não altera WABA, PIN, callback ou qualquer configuração do aplicativo existente **chatapp**. Também não envia respostas automáticas. O envio só ocorre quando alguém chama manualmente `POST /api/messages/text`.
+O projeto é deliberadamente passivo: ao iniciar, não chama a API da Meta, não registra, remove ou migra números, não assina `subscribed_apps`, não altera WABA, PIN, callback ou qualquer configuração do aplicativo existente **chatapp**. Também não envia respostas automáticas nem inicia chamadas sozinho. Mensagens e ações de chamada só ocorrem por requisições autenticadas e explícitas à API.
 
 ## Instalação e execução
 
@@ -42,9 +42,9 @@ NODE_ENV=production
 - `WHATSAPP_VERIFY_TOKEN`: valor secreto criado por você; deve ser igual ao informado na configuração do webhook na Meta.
 - `HOST`: mantenha `127.0.0.1` em produção para aceitar conexões apenas do proxy local.
 - `WHATSAPP_ACCESS_TOKEN`: token da API, usado somente no endpoint manual de envio.
-- `WHATSAPP_PHONE_NUMBER_ID`: ID do número usado na URL de envio.
+- `WHATSAPP_PHONE_NUMBER_ID`: ID padrão do número; conversas recebidas guardam seu próprio `phone_number_id` para suportar múltiplos números.
 - `WHATSAPP_WABA_ID`: ID da WABA, reservado para uso futuro; nenhuma configuração é alterada por este projeto.
-- `META_GRAPH_API_VERSION`: versão da Graph API usada no envio manual.
+- `META_GRAPH_API_VERSION`: versão da Graph API usada em mensagens, mídias, templates e chamadas.
 - `PRIVACY_CONTACT_EMAIL`: email exibido na página de solicitação de exclusão de dados; pode ficar vazio.
 - `DATABASE_URL`: conexão PostgreSQL exclusiva da aplicação, preferencialmente via `127.0.0.1`.
 - `FRONTEND_URLS`: array JSON ou lista separada por vírgulas com as origens permitidas pelo CORS e Socket.IO.
@@ -79,6 +79,20 @@ Em produção, use migrations versionadas com `prisma migrate deploy`; não subs
 
 O backend também oferece consulta/preview de templates aprovados, envio de templates por conversa, upload de imagens, documentos, vídeos e áudios, além de proxy autenticado para mídias recebidas. Consulte exemplos completos em [`docs/API.md`](docs/API.md).
 
+## WhatsApp Calling
+
+O backend processa o campo oficial `calls` no mesmo webhook existente, mantém histórico no PostgreSQL e oferece sinalização segura entre navegador e Meta para chamadas WebRTC. Não usa SIP, não persiste SDP e nunca expõe o token da Meta ao frontend.
+
+Fluxos disponíveis:
+
+- chamada recebida: `call:incoming` → SDP offer em `call:signal` → `pre-accept` → `accept`;
+- recusar e encerrar chamadas;
+- consultar histórico e estados em tempo real;
+- solicitar e consultar permissão outbound;
+- iniciar outbound somente quando a Meta retornar `start_call.can_perform_action=true`.
+
+Para receber os eventos, o campo webhook `calls` deve ser habilitado manualmente no aplicativo Meta. O projeto não faz essa alteração. Endpoints, payloads, estados, Socket.IO e o fluxo do navegador estão em [`docs/API.md`](docs/API.md#whatsapp-calling).
+
 ## Endpoints e testes
 
 Verifique a saúde do serviço:
@@ -107,7 +121,7 @@ curl -X POST http://127.0.0.1:3000/webhook/whatsapp \
 
 O webhook confirma HTTP 200 imediatamente e processa/loga o payload de forma protegida logo depois. IDs de mensagem repetidos em até cinco minutos são ignorados por uma estrutura temporária em memória, isolada para futura substituição por Redis ou banco.
 
-O envio manual abaixo é o único endpoint que chama a API da Meta:
+Exemplo de envio manual de mensagem:
 
 ```bash
 curl -X POST http://127.0.0.1:3000/api/messages/text \

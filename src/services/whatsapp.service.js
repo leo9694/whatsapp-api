@@ -33,7 +33,7 @@ function getConfiguration() {
 }
 
 async function graphRequest(url, options = {}) {
-  const { accessToken } = getConfiguration();
+  const accessToken = requiredEnvironment("WHATSAPP_ACCESS_TOKEN");
   const response = await fetch(url, {
     ...options,
     headers: {
@@ -54,6 +54,77 @@ async function sendMessage(to, message) {
     method: "POST",
     body: JSON.stringify({ messaging_product: "whatsapp", to, ...message }),
   });
+}
+
+function getApiVersion() {
+  return process.env.META_GRAPH_API_VERSION?.trim() || "v25.0";
+}
+
+function graphUrl(phoneNumberId, edge) {
+  return `https://graph.facebook.com/${getApiVersion()}/${encodeURIComponent(phoneNumberId)}/${edge}`;
+}
+
+async function sendCallAction(phoneNumberId, payload) {
+  return (await graphRequest(graphUrl(phoneNumberId, "calls"), {
+    method: "POST",
+    body: JSON.stringify({ messaging_product: "whatsapp", ...payload }),
+  })).data;
+}
+
+function preAcceptCall(phoneNumberId, callId, sdp) {
+  return sendCallAction(phoneNumberId, {
+    call_id: callId,
+    action: "pre_accept",
+    session: { sdp_type: "answer", sdp },
+  });
+}
+
+function acceptCall(phoneNumberId, callId, sdp, callbackData) {
+  return sendCallAction(phoneNumberId, {
+    call_id: callId,
+    action: "accept",
+    session: { sdp_type: "answer", sdp },
+    ...(callbackData ? { biz_opaque_callback_data: callbackData } : {}),
+  });
+}
+
+function rejectCall(phoneNumberId, callId) {
+  return sendCallAction(phoneNumberId, { call_id: callId, action: "reject" });
+}
+
+function terminateCall(phoneNumberId, callId) {
+  return sendCallAction(phoneNumberId, { call_id: callId, action: "terminate" });
+}
+
+function initiateCall(phoneNumberId, to, sdp, callbackData) {
+  return sendCallAction(phoneNumberId, {
+    to,
+    action: "connect",
+    session: { sdp_type: "offer", sdp },
+    ...(callbackData ? { biz_opaque_callback_data: callbackData } : {}),
+  });
+}
+
+async function getCallPermission(phoneNumberId, waId) {
+  const query = new URLSearchParams({ user_wa_id: waId });
+  return (await graphRequest(`${graphUrl(phoneNumberId, "call_permissions")}?${query}`)).data;
+}
+
+async function requestCallPermission(phoneNumberId, to, body) {
+  return (await graphRequest(graphUrl(phoneNumberId, "messages"), {
+    method: "POST",
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to,
+      type: "interactive",
+      interactive: {
+        type: "call_permission_request",
+        action: { name: "call_permission_request" },
+        ...(body ? { body: { text: body } } : {}),
+      },
+    }),
+  })).data;
 }
 
 async function sendTextMessage(to, text, replyToMessageId = "") {
@@ -214,6 +285,13 @@ module.exports = {
   getMediaMetadata,
   downloadMedia,
   uploadMedia,
+  preAcceptCall,
+  acceptCall,
+  rejectCall,
+  terminateCall,
+  initiateCall,
+  getCallPermission,
+  requestCallPermission,
   maskRecipient,
   MetaApiError,
 };

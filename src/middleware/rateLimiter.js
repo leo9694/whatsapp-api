@@ -16,4 +16,20 @@ const mediaDownloadLimiter = rateLimit({
   message: { success: false, error: { code: "RATE_LIMITED", message: "Limite temporário de downloads excedido." } },
 });
 
-module.exports = { messageSendLimiter, mediaDownloadLimiter };
+const callActionLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 30,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { success: false, error: { code: "RATE_LIMITED", message: "Limite temporário de ações de chamada excedido." } },
+});
+
+const callQueryLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 120,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { success: false, error: { code: "RATE_LIMITED", message: "Limite temporário de consultas de chamada excedido." } },
+});
+
+module.exports = { messageSendLimiter, mediaDownloadLimiter, callActionLimiter, callQueryLimiter };

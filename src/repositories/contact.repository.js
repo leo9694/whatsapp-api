@@ -15,4 +15,9 @@ function upsertByWaId({ waId, phone, profileName, name }, db = prisma) {
   });
 }
 
-module.exports = { upsertByWaId };
+function findByWaId(waId, db = prisma) {
+  if (!waId) return Promise.resolve(null);
+  return db.contact.findUnique({ where: { waId } });
+}
+
+module.exports = { upsertByWaId, findByWaId };

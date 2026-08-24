@@ -33,7 +33,7 @@ function errorHandler(error, _req, res, _next) {
   const response = {
     success: false,
     error: {
-      code: error.name === "MetaApiError" ? "META_API_ERROR" : status === 404 ? "NOT_FOUND" : status >= 500 ? "INTERNAL_ERROR" : "BAD_REQUEST",
+      code: error.publicCode || (error.name === "MetaApiError" ? "META_API_ERROR" : status === 404 ? "NOT_FOUND" : status >= 500 ? "INTERNAL_ERROR" : "BAD_REQUEST"),
       message: status >= 500 ? "Não foi possível concluir a solicitação." : error.message,
     },
   };

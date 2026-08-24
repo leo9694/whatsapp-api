@@ -335,3 +335,162 @@ Erro:
 ```json
 { "success": false, "error": { "code": "VALIDATION_ERROR", "message": "Dados inválidos." } }
 ```
+
+## WhatsApp Calling
+
+Implementação baseada na WhatsApp Business Calling API oficial da Meta para Graph API `v26.0`. Todas as rotas abaixo exigem `X-API-Key`. O access token permanece exclusivamente no backend.
+
+### Arquitetura e WebRTC
+
+```text
+WhatsApp do cliente ↔ Meta Calling API ↔ Express/Socket.IO ↔ navegador do atendente
+```
+
+O navegador é responsável por `getUserMedia`, `RTCPeerConnection`, `setRemoteDescription`, criação do SDP answer/offer e reprodução do áudio remoto. O backend apenas transporta a sinalização e chama `POST /{PHONE_NUMBER_ID}/calls` com os contratos oficiais.
+
+SDP não é persistido no banco. A offer recebida fica em memória por até cinco minutos e é enviada somente pelo evento autenticado `call:signal`. Após reinício do backend, chamadas que ainda não foram atendidas devem ser refeitas.
+
+O SDP deve ser RFC 8866 e usar os codecs aceitos pela Meta. A pilha da Meta é ICE-LITE; o `RTCPeerConnection` do navegador atua como ICE-FULL e inicia os checks STUN. A Meta não fornece um servidor TURN específico no contrato. Não há Coturn instalado: avalie TURN próprio apenas se testes reais mostrarem bloqueio de UDP/NAT/firewall.
+
+### Estados internos
+
+| Estado | Uso |
+|---|---|
+| `RINGING` | chamada inbound tocando ou outbound tocando |
+| `CONNECTING` | sinalização/WebRTC em negociação |
+| `ACTIVE` | chamada atendida; define `answeredAt` |
+| `REJECTED` | chamada recusada |
+| `MISSED` | encerrada sem `start_time`/atendimento |
+| `BUSY` | falha normalizada como ocupado |
+| `FAILED` | falha técnica retornada pela Meta |
+| `ENDED` | chamada atendida e encerrada |
+
+`durationSeconds` é calculado entre `answeredAt` e `endedAt`, ou usa a duração oficial do webhook `terminate` quando presente. Chamadas não alteram a janela de 24 horas das mensagens.
+
+### Eventos Socket.IO
+
+- `call:incoming`
+- `call:ringing`
+- `call:connecting`
+- `call:active`
+- `call:rejected`
+- `call:ended`
+- `call:failed`
+- `call:updated`
+- `call:signal` — único evento que contém SDP
+
+Exemplo de chamada recebida:
+
+```json
+{
+  "callId": "wacid...",
+  "conversationId": 123,
+  "contact": { "id": 10, "name": "Cliente", "phone": "5566..." },
+  "phoneNumberId": "...",
+  "direction": "INBOUND",
+  "status": "RINGING",
+  "startedAt": "2026-08-24T20:00:00.000Z"
+}
+```
+
+Sinalização separada:
+
+```json
+{
+  "callId": "wacid...",
+  "direction": "INBOUND",
+  "session": { "sdpType": "offer", "sdp": "v=0..." }
+}
+```
+
+### Chamada recebida
+
+1. Escute `call:incoming` e `call:signal`.
+2. Solicite o microfone com `navigator.mediaDevices.getUserMedia({ audio: true })`.
+3. Crie `RTCPeerConnection`, adicione a faixa local e aplique a offer recebida.
+4. Gere a answer e aguarde o ICE gathering necessário.
+5. Envie a mesma answer para `pre-accept` e `accept`.
+6. Só libere o fluxo normal de mídia após `accept` retornar HTTP 200.
+
+```js
+const session = { sdpType: "answer", sdp: peerConnection.localDescription.sdp };
+const body = { session, agent: { id: "72", name: "LEONARDO", signature: "Leonardo" } };
+
+await fetch(`${API}/api/calls/${encodeURIComponent(callId)}/pre-accept`, {
+  method: "POST", headers: { ...authHeaders, "Content-Type": "application/json" }, body: JSON.stringify(body),
+});
+await fetch(`${API}/api/calls/${encodeURIComponent(callId)}/accept`, {
+  method: "POST", headers: { ...authHeaders, "Content-Type": "application/json" }, body: JSON.stringify(body),
+});
+```
+
+Endpoints inbound:
+
+- `POST /api/calls/:callId/pre-accept`
+- `POST /api/calls/:callId/accept`
+- `POST /api/calls/:callId/reject` com `{ "agent": {...} }`
+- `POST /api/calls/:callId/terminate` com `{ "agent": {...} }`
+
+O atendente deve ser o responsável pela conversa, salvo usuário marcado como `director`. Estados inválidos retornam HTTP 409.
+
+### Histórico
+
+- `GET /api/calls?page=1&limit=30&conversationId=&contactId=&direction=&status=&date=2026-08-24`
+- `GET /api/conversations/:id/calls?page=1&limit=30`
+
+A paginação é obrigatória e os limites aceitos são de 1 a 100 itens.
+
+### Permissão e chamada outbound
+
+Consulte a permissão atual:
+
+```http
+GET /api/conversations/123/calls/permission?id=72&name=LEONARDO&director=false
+```
+
+Solicite permissão durante uma janela de atendimento aberta:
+
+```http
+POST /api/conversations/123/calls/permission
+Content-Type: application/json
+
+{
+  "body": "Podemos ligar para ajudar no seu atendimento?",
+  "agent": { "id": "72", "name": "LEONARDO" }
+}
+```
+
+Fora da janela de atendimento, use um template de `call_permission_request` aprovado; o endpoint livre não contorna a regra da Meta.
+
+Inicie somente após o usuário conceder permissão:
+
+```http
+POST /api/conversations/123/calls
+Content-Type: application/json
+
+{
+  "session": { "sdpType": "offer", "sdp": "v=0..." },
+  "agent": { "id": "72", "name": "LEONARDO" }
+}
+```
+
+Antes do `connect`, o backend consulta `GET /{PHONE_NUMBER_ID}/call_permissions` e exige `start_call.can_perform_action=true`. Sem permissão retorna HTTP 409 com `CALL_PERMISSION_REQUIRED`. A resposta SDP answer chega posteriormente em `call:signal`.
+
+### Segurança e limitações
+
+- `phone_number_id` vem da conversa/canal e não é assumido globalmente; `WHATSAPP_PHONE_NUMBER_ID` é apenas fallback para conversas antigas.
+- Toda ação exige API key e identificação do atendente.
+- Tokens, APP_SECRET e SDP nunca aparecem em logs.
+- O rate limit é 30 ações/minuto e 120 consultas/minuto por origem.
+- O webhook responde HTTP 200 antes do processamento assíncrono e mensagens normais são processadas independentemente de falhas em chamadas.
+- Não há SIP, PSTN, VIP Solutions, gravação nem transcrição nesta implementação.
+- O backend não habilita Calling, não assina o campo `calls` e não altera configurações da Meta automaticamente.
+
+### Referências oficiais da Meta
+
+- [Calling API — referência](https://developers.facebook.com/documentation/business-messaging/whatsapp/calling/reference)
+- [Chamadas iniciadas pelo usuário](https://developers.facebook.com/documentation/business-messaging/whatsapp/calling/user-initiated-calls)
+- [Chamadas iniciadas pela empresa](https://developers.facebook.com/documentation/business-messaging/whatsapp/calling/business-initiated-calls)
+- [Permissões de chamada](https://developers.facebook.com/documentation/business-messaging/whatsapp/calling/user-call-permissions)
+- [Padrões de integração WebRTC/SIP](https://developers.facebook.com/documentation/business-messaging/whatsapp/calling/integration-patterns)
+- [Solução de problemas](https://developers.facebook.com/documentation/business-messaging/whatsapp/calling/troubleshooting)

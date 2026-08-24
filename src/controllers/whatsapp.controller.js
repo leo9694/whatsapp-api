@@ -1,5 +1,6 @@
 const logger = require("../utils/logger");
 const messageService = require("../services/message.service");
+const callService = require("../services/call.service");
 
 function verifyWebhook(req, res) {
   const mode = req.query["hub.mode"];
@@ -19,10 +20,12 @@ function verifyWebhook(req, res) {
   return res.sendStatus(403);
 }
 
-async function processWebhookPayload(payload) {
+async function processWebhookPayload(payload, dependencies = {}) {
+  const messagesApi = dependencies.messageService || messageService;
+  const callsApi = dependencies.callService || callService;
   logger.info("webhook_payload_received", {
     object: payload?.object || null,
-    payload,
+    entryCount: Array.isArray(payload?.entry) ? payload.entry.length : 0,
   });
 
   const entries = Array.isArray(payload?.entry) ? payload.entry : [];
@@ -34,6 +37,7 @@ async function processWebhookPayload(payload) {
       const contacts = Array.isArray(value.contacts) ? value.contacts : [];
       const messages = Array.isArray(value.messages) ? value.messages : [];
       const statuses = Array.isArray(value.statuses) ? value.statuses : [];
+      const calls = Array.isArray(value.calls) ? value.calls : [];
 
       logger.info("webhook_change", {
         object: payload?.object || null,
@@ -42,6 +46,7 @@ async function processWebhookPayload(payload) {
         field: change?.field || null,
         messageCount: messages.length,
         statusCount: statuses.length,
+        callCount: calls.length,
       });
 
       for (const message of messages) {
@@ -58,9 +63,13 @@ async function processWebhookPayload(payload) {
           text: message?.text?.body || null,
           contactProfileName: contact?.profile?.name || null,
         });
-        const result = await messageService.processInboundMessage({ message, contacts });
-        if (result?.duplicate) {
-          logger.warn("duplicate_message_ignored", { messageId: message?.id || null, phoneNumberId });
+        try {
+          const result = await messagesApi.processInboundMessage({ message, contacts, phoneNumberId });
+          if (result?.duplicate) {
+            logger.warn("duplicate_message_ignored", { messageId: message?.id || null, phoneNumberId });
+          }
+        } catch (error) {
+          logger.error("whatsapp_message_processing_failed", { messageId: message?.id || null, message: error.message });
         }
       }
 
@@ -74,7 +83,33 @@ async function processWebhookPayload(payload) {
           recipientId: status?.recipient_id || null,
           statusTimestamp: status?.timestamp || null,
         });
-        await messageService.processStatus(status);
+        try {
+          if (status?.type === "call") await callsApi.processCallStatus({ status, phoneNumberId });
+          else await messagesApi.processStatus(status);
+        } catch (error) {
+          logger.error("whatsapp_status_processing_failed", { id: status?.id || null, message: error.message });
+        }
+      }
+
+      for (const call of calls) {
+        logger.info("whatsapp_call_received", {
+          callId: call?.id || null,
+          phoneNumberId,
+          callEvent: call?.event || null,
+          direction: call?.direction || null,
+          callTimestamp: call?.timestamp || null,
+          hasSession: Boolean(call?.session?.sdp),
+        });
+        try {
+          await callsApi.processCallEvent({
+            call,
+            contacts,
+            phoneNumberId,
+            errors: Array.isArray(value.errors) ? value.errors : [],
+          });
+        } catch (error) {
+          logger.error("whatsapp_call_processing_failed", { callId: call?.id || null, message: error.message });
+        }
       }
     }
   }

@@ -4,8 +4,8 @@ function findOpenByContactId(contactId, db = prisma) {
   return db.conversation.findFirst({ where: { contactId, status: "OPEN" }, orderBy: { createdAt: "desc" } });
 }
 
-function createForContact(contactId, db = prisma) {
-  return db.conversation.create({ data: { contactId, status: "OPEN" } });
+function createForContact(contactId, db = prisma, phoneNumberId) {
+  return db.conversation.create({ data: { contactId, status: "OPEN", ...(phoneNumberId ? { phoneNumberId } : {}) } });
 }
 
 function findById(id, db = prisma) {
@@ -48,6 +48,11 @@ function list({ skip, take, search, status, assignment, viewerId }, db = prisma)
 
 function updateAssignment(id, data, db = prisma) {
   return db.conversation.update({ where: { id }, data, include: { contact: true } });
+}
+
+function updatePhoneNumberId(id, phoneNumberId, db = prisma) {
+  if (!phoneNumberId) return findById(id, db);
+  return db.conversation.update({ where: { id }, data: { phoneNumberId }, include: { contact: true } });
 }
 
 function claimIfUnassigned(id, data, db = prisma) {
@@ -127,4 +132,5 @@ module.exports = {
   updateAssignment,
   claimIfUnassigned,
   createAssignmentHistory,
+  updatePhoneNumberId,
 };

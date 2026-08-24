@@ -72,7 +72,11 @@ async function createConversation({ name, phone }, db = prisma) {
     const contact = await contactRepository.upsertByWaId({ waId, phone: waId, name: name || undefined }, tx);
     let conversation = await conversationRepository.findOpenByContactId(contact.id, tx);
     const created = !conversation;
-    if (created) conversation = await conversationRepository.createForContact(contact.id, tx);
+    if (created) conversation = await conversationRepository.createForContact(
+      contact.id,
+      tx,
+      process.env.WHATSAPP_PHONE_NUMBER_ID?.trim() || undefined,
+    );
     const complete = await conversationRepository.findById(conversation.id, tx);
     return { conversation: toConversationDto(complete), contact, created };
   });

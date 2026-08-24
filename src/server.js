@@ -11,6 +11,7 @@ const messageRoutes = require("./routes/message.routes");
 const statusRoutes = require("./routes/status.routes");
 const templateRoutes = require("./routes/template.routes");
 const mediaRoutes = require("./routes/media.routes");
+const callRoutes = require("./routes/call.routes");
 const logger = require("./utils/logger");
 const webhookRequestLogger = require("./middleware/webhookRequestLogger");
 const authenticateRequest = require("./middleware/authenticateRequest");
@@ -39,6 +40,7 @@ app.use(messageRoutes);
 app.use(statusRoutes);
 app.use(templateRoutes);
 app.use(mediaRoutes);
+app.use(callRoutes);
 
 app.use(errorHandler);
 

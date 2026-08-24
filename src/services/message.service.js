@@ -44,7 +44,7 @@ function extractContent(message) {
   };
 }
 
-async function processInboundMessage({ message, contacts = [] }, dependencies = {}) {
+async function processInboundMessage({ message, contacts = [], phoneNumberId }, dependencies = {}) {
   const db = dependencies.db || prisma;
   const waId = message?.from;
   if (!waId) {
@@ -66,8 +66,10 @@ async function processInboundMessage({ message, contacts = [] }, dependencies = 
       let conversation = await conversationRepository.findOpenByContactId(contact.id, tx);
       let isNewConversation = false;
       if (!conversation) {
-        conversation = await conversationRepository.createForContact(contact.id, tx);
+        conversation = await conversationRepository.createForContact(contact.id, tx, phoneNumberId);
         isNewConversation = true;
+      } else if (phoneNumberId && conversation.phoneNumberId !== phoneNumberId) {
+        conversation = await conversationRepository.updatePhoneNumberId(conversation.id, phoneNumberId, tx);
       }
       const createdMessage = await messageRepository.create({
         wamid: message.id || null,

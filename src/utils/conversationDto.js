@@ -48,6 +48,7 @@ function toConversationDto(conversation, options = {}) {
     canSendFreeform: serviceWindow.canSendFreeform,
     canSendFreeText: serviceWindow.canSendFreeform,
     requiresTemplate: serviceWindow.requiresTemplate,
+    phoneNumberId: conversation.phoneNumberId || null,
     assignment: conversation.assignedUserId ? {
       userId: String(conversation.assignedUserId),
       userName: conversation.assignedUserName || null,

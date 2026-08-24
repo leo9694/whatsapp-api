@@ -26,6 +26,22 @@ enum MessageStatus {
   FAILED
 }
 
+enum CallDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum CallStatus {
+  RINGING
+  CONNECTING
+  ACTIVE
+  REJECTED
+  MISSED
+  BUSY
+  FAILED
+  ENDED
+}
+
 model Contact {
   id            Int            @id @default(autoincrement())
   waId          String         @unique
@@ -35,6 +51,7 @@ model Contact {
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   conversations Conversation[]
+  calls         Call[]
 }
 
 model Conversation {
@@ -44,6 +61,7 @@ model Conversation {
   assignedUserId                 String?
   assignedUserName               String?
   assignedAt                     DateTime?
+  phoneNumberId                  String?
   unreadCount                    Int                      @default(0)
   lastMessageAt                  DateTime?
   conversationInitiated          Boolean                  @default(false)
@@ -59,12 +77,39 @@ model Conversation {
   contact                        Contact                  @relation(fields: [contactId], references: [id], onDelete: Restrict)
   messages                       Message[]
   assignments                    ConversationAssignment[]
+  calls                          Call[]
 
   @@index([contactId])
   @@index([lastMessageAt])
   @@index([status, lastMessageAt])
   @@index([initialTemplateWamid])
   @@index([customerServiceWindowExpiresAt])
+}
+
+model Call {
+  id              Int           @id @default(autoincrement())
+  metaCallId      String        @unique
+  conversationId  Int?
+  contactId       Int?
+  phoneNumberId   String
+  direction       CallDirection
+  status          CallStatus
+  remotePhone     String?
+  startedAt       DateTime?
+  answeredAt      DateTime?
+  endedAt         DateTime?
+  durationSeconds Int?
+  endReason       String?
+  lastEventAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  conversation    Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  contact         Contact?      @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId, createdAt])
+  @@index([contactId, createdAt])
+  @@index([phoneNumberId, status])
+  @@index([direction, status, createdAt])
 }
 
 model Message {

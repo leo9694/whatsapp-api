@@ -7,14 +7,18 @@ function matchesContactSearch(contact, search) {
 }
 
 function createFakePrisma() {
-  const state = { contacts: [], conversations: [], messages: [], assignments: [] };
-  const next = { contact: 1, conversation: 1, message: 1, assignment: 1 };
+  const state = { contacts: [], conversations: [], messages: [], assignments: [], calls: [] };
+  const next = { contact: 1, conversation: 1, message: 1, assignment: 1, call: 1 };
   const now = () => new Date();
 
   const db = {
     state,
     $transaction: (callback) => callback(db),
     contact: {
+      async findUnique({ where }) {
+        const item = state.contacts.find((contact) => contact.waId === where.waId || contact.id === where.id);
+        return item ? { ...item } : null;
+      },
       async upsert({ where, create, update }) {
         let item = state.contacts.find((contact) => contact.waId === where.waId);
         if (item) Object.assign(item, update, { updatedAt: now() });
@@ -35,6 +39,7 @@ function createFakePrisma() {
         const item = {
           id: next.conversation++, status: "OPEN", assignedUserId: null, assignedUserName: null,
           assignedAt: null, unreadCount: 0,
+          phoneNumberId: null,
           lastMessageAt: null, conversationInitiated: false, conversationInitiatedAt: null,
           initialTemplateWamid: null, initialTemplateStatus: null, lastInboundAt: null,
           customerServiceWindowOpenedAt: null, customerServiceWindowExpiresAt: null,
@@ -110,6 +115,57 @@ function createFakePrisma() {
         const item = { id: next.assignment++, createdAt: now(), ...data };
         state.assignments.push(item);
         return { ...item };
+      },
+    },
+    call: {
+      includeRelations(item, include) {
+        const result = { ...item };
+        if (include?.contact) result.contact = item.contactId
+          ? { ...state.contacts.find((contact) => contact.id === item.contactId) } : null;
+        if (include?.conversation) result.conversation = item.conversationId
+          ? { ...state.conversations.find((conversation) => conversation.id === item.conversationId) } : null;
+        return result;
+      },
+      async findUnique({ where, include }) {
+        const item = state.calls.find((call) => call.metaCallId === where.metaCallId || call.id === where.id);
+        return item ? this.includeRelations(item, include) : null;
+      },
+      async create({ data, include }) {
+        if (state.calls.some((call) => call.metaCallId === data.metaCallId)) {
+          throw Object.assign(new Error("unique"), { code: "P2002" });
+        }
+        const item = { id: next.call++, createdAt: now(), updatedAt: now(), ...data };
+        state.calls.push(item);
+        return this.includeRelations(item, include);
+      },
+      async update({ where, data, include }) {
+        const item = state.calls.find((call) => call.metaCallId === where.metaCallId);
+        if (!item) throw Object.assign(new Error("not found"), { code: "P2025" });
+        Object.assign(item, data, { updatedAt: now() });
+        return this.includeRelations(item, include);
+      },
+      async findMany({ where = {}, skip = 0, take = 30, include }) {
+        return state.calls.filter((item) => {
+          if (where.conversationId && item.conversationId !== where.conversationId) return false;
+          if (where.contactId && item.contactId !== where.contactId) return false;
+          if (where.direction && item.direction !== where.direction) return false;
+          if (where.status && item.status !== where.status) return false;
+          if (where.createdAt?.gte && item.createdAt < where.createdAt.gte) return false;
+          if (where.createdAt?.lt && item.createdAt >= where.createdAt.lt) return false;
+          return true;
+        }).sort((a, b) => b.createdAt - a.createdAt)
+          .slice(skip, skip + take).map((item) => this.includeRelations(item, include));
+      },
+      async count({ where = {} }) {
+        return state.calls.filter((item) => {
+          if (where.conversationId && item.conversationId !== where.conversationId) return false;
+          if (where.contactId && item.contactId !== where.contactId) return false;
+          if (where.direction && item.direction !== where.direction) return false;
+          if (where.status && item.status !== where.status) return false;
+          if (where.createdAt?.gte && item.createdAt < where.createdAt.gte) return false;
+          if (where.createdAt?.lt && item.createdAt >= where.createdAt.lt) return false;
+          return true;
+        }).length;
       },
     },
     message: {

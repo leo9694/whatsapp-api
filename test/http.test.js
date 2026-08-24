@@ -163,6 +163,8 @@ for (const [method, path] of [
   ["POST", "/api/conversations"],
   ["GET", "/api/media/media-123"],
   ["POST", "/api/conversations/1/messages/image"],
+  ["GET", "/api/calls"],
+  ["POST", "/api/calls/wacid.test/accept"],
 ]) {
   test(`${method} ${path} exige autenticação`, async () => {
     const response = await fetch(`${baseUrl}${path}`, { method });
@@ -172,6 +174,16 @@ for (const [method, path] of [
     assert.equal(body.error.code, "UNAUTHORIZED");
   });
 }
+
+test("POST /api/calls/:callId/accept rejeita SDP inválido antes de acessar a Meta", async () => {
+  const response = await fetch(`${baseUrl}/api/calls/wacid.test/accept`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-API-Key": "internal-test-key" },
+    body: JSON.stringify({ session: { sdpType: "answer", sdp: "inválido" }, agent: { id: "1", name: "Agente" } }),
+  });
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).error.code, "VALIDATION_ERROR");
+});
 
 test("CORS permite origem da whitelist e rejeita origem desconhecida", async () => {
   const allowed = await fetch(`${baseUrl}/health`, { headers: { Origin: "https://chat.nortesulsementes.com" } });
