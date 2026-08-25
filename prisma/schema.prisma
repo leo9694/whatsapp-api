@@ -42,6 +42,15 @@ enum CallStatus {
   ENDED
 }
 
+enum CallTransferStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CANCELLED
+  COMPLETED
+  EXPIRED
+}
+
 model Contact {
   id            Int            @id @default(autoincrement())
   waId          String         @unique
@@ -101,15 +110,43 @@ model Call {
   durationSeconds Int?
   endReason       String?
   lastEventAt     DateTime?
+  currentAgentId  String?
+  currentAgentName String?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
   conversation    Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
   contact         Contact?      @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  transfers       CallTransfer[]
 
   @@index([conversationId, createdAt])
   @@index([contactId, createdAt])
   @@index([phoneNumberId, status])
   @@index([direction, status, createdAt])
+  @@index([currentAgentId, status])
+}
+
+model CallTransfer {
+  id            String             @id @default(uuid())
+  callId        Int
+  fromAgentId   String
+  fromAgentName String
+  toAgentId     String
+  toAgentName   String
+  status        CallTransferStatus @default(PENDING)
+  requestedAt   DateTime           @default(now())
+  acceptedAt    DateTime?
+  rejectedAt    DateTime?
+  cancelledAt   DateTime?
+  mediaReadyAt  DateTime?
+  completedAt   DateTime?
+  expiresAt     DateTime
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  call          Call               @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@index([callId, requestedAt])
+  @@index([toAgentId, status])
+  @@index([status, expiresAt])
 }
 
 model Message {

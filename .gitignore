@@ -5,4 +5,5 @@ node_modules/
 npm-debug.log*
 *.log
 storage/
+media-gateway/bin/
 .DS_Store

@@ -1,15 +1,28 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const crypto = require("crypto");
 
 process.env.WHATSAPP_VERIFY_TOKEN = "local-test-token";
 process.env.PRIVACY_CONTACT_EMAIL = "privacidade@nortesulsementes.com";
 process.env.FRONTEND_URLS = '["https://chat.nortesulsementes.com"]';
 process.env.INTERNAL_API_KEY = "internal-test-key";
+process.env.CALL_AGENT_AUTH_SECRET = "segredo-hmac-de-teste-com-mais-de-32-caracteres";
 const app = require("../src/server");
 const conversationService = require("../src/services/conversation.service");
 
 let server;
 let baseUrl;
+
+function agentToken() {
+  const now = Math.floor(Date.now() / 1000);
+  const payload = Buffer.from(JSON.stringify({
+    iss: "norte-sul-atendimento", aud: "norte-sul-whatsapp-api",
+    sub: "72", name: "Agente Teste", iat: now, exp: now + 60,
+  })).toString("base64url");
+  const signature = crypto.createHmac("sha256", process.env.CALL_AGENT_AUTH_SECRET)
+    .update(payload).digest("base64url");
+  return `${payload}.${signature}`;
+}
 
 test.before(async () => {
   server = app.listen(0, "127.0.0.1");
@@ -183,6 +196,19 @@ test("POST /api/calls/:callId/accept rejeita SDP inválido antes de acessar a Me
   });
   assert.equal(response.status, 400);
   assert.equal((await response.json()).error.code, "VALIDATION_ERROR");
+});
+
+test("rotas individuais de chamada exigem identidade assinada do atendente", async () => {
+  const denied = await fetch(`${baseUrl}/api/call-agents`, {
+    headers: { "X-API-Key": "internal-test-key" },
+  });
+  assert.equal(denied.status, 401);
+
+  const allowed = await fetch(`${baseUrl}/api/call-agents`, {
+    headers: { "X-API-Key": "internal-test-key", "X-Agent-Token": agentToken() },
+  });
+  assert.equal(allowed.status, 200);
+  assert.ok(Array.isArray((await allowed.json()).data));
 });
 
 test("CORS permite origem da whitelist e rejeita origem desconhecida", async () => {

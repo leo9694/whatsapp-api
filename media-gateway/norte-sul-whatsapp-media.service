@@ -1,0 +1,27 @@
+[Unit]
+Description=Norte Sul WhatsApp WebRTC Media Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=true
+WorkingDirectory=/opt/norte-sul-whatsapp-api/media-gateway
+EnvironmentFile=/opt/norte-sul-whatsapp-api/.env
+ExecStart=/opt/norte-sul-whatsapp-api/media-gateway/bin/norte-sul-whatsapp-media
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

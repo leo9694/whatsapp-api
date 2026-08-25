@@ -15,10 +15,12 @@ const callRoutes = require("./routes/call.routes");
 const logger = require("./utils/logger");
 const webhookRequestLogger = require("./middleware/webhookRequestLogger");
 const authenticateRequest = require("./middleware/authenticateRequest");
+const { authenticateAgent } = require("./middleware/authenticateAgent");
 const errorHandler = require("./middleware/errorHandler");
 const { createCorsOptions } = require("./config/frontendOrigins");
 const { initializeSocket } = require("./sockets/socket");
 const prisma = require("./database/prisma");
+const callTransferService = require("./services/callTransfer.service");
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
@@ -35,6 +37,7 @@ app.get("/health", (_req, res) => res.status(200).json({ status: "ok" }));
 app.use(legalRoutes);
 app.use(whatsappRoutes);
 app.use("/api", authenticateRequest);
+app.use("/api", authenticateAgent);
 app.use(conversationRoutes);
 app.use(messageRoutes);
 app.use(statusRoutes);
@@ -47,6 +50,7 @@ app.use(errorHandler);
 function startServer() {
   const server = http.createServer(app);
   initializeSocket(server);
+  callTransferService.startExpirationWorker();
   server.listen(port, host, () => {
     logger.info("server_started", { host, port });
   });
@@ -56,6 +60,7 @@ function startServer() {
 async function shutdown(signal, server) {
   logger.info("server_stopping", { signal });
   server.close(async () => {
+    callTransferService.stopExpirationWorker();
     await prisma.$disconnect();
     process.exit(0);
   });

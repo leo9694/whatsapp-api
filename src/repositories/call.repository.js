@@ -1,15 +1,21 @@
 const prisma = require("../database/prisma");
 
 function findByMetaCallId(metaCallId, db = prisma) {
-  return db.call.findUnique({ where: { metaCallId }, include: { contact: true, conversation: true } });
+  return db.call.findUnique({
+    where: { metaCallId },
+    include: { contact: true, conversation: true, transfers: { orderBy: { requestedAt: "asc" } } },
+  });
 }
 
 function create(data, db = prisma) {
-  return db.call.create({ data, include: { contact: true, conversation: true } });
+  return db.call.create({ data, include: { contact: true, conversation: true, transfers: true } });
 }
 
 function update(metaCallId, data, db = prisma) {
-  return db.call.update({ where: { metaCallId }, data, include: { contact: true, conversation: true } });
+  return db.call.update({
+    where: { metaCallId }, data,
+    include: { contact: true, conversation: true, transfers: { orderBy: { requestedAt: "asc" } } },
+  });
 }
 
 function list({ where, skip, take }, db = prisma) {
@@ -19,10 +25,14 @@ function list({ where, skip, take }, db = prisma) {
       skip,
       take,
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      include: { contact: true },
+      include: { contact: true, transfers: { orderBy: { requestedAt: "asc" } } },
     }),
     db.call.count({ where }),
   ]);
 }
 
-module.exports = { findByMetaCallId, create, update, list };
+function findActiveByAgent(agentId, db = prisma) {
+  return db.call.findFirst({ where: { currentAgentId: String(agentId), status: "ACTIVE" } });
+}
+
+module.exports = { findActiveByAgent, findByMetaCallId, create, update, list };

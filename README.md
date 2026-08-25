@@ -36,6 +36,16 @@ PRIVACY_CONTACT_EMAIL=privacidade@exemplo.com
 DATABASE_URL=postgresql://usuario:senha@127.0.0.1:5432/norte_sul_whatsapp
 FRONTEND_URLS=["https://chat.nortesulsementes.com"]
 INTERNAL_API_KEY=chave-temporaria-entre-servidores
+CALL_MEDIA_GATEWAY_ENABLED=false
+CALL_AGENT_AUTH_REQUIRED=false
+CALL_AGENT_AUTH_SECRET=segredo-aleatorio-compartilhado-com-o-frontend
+CALL_TRANSFER_TIMEOUT_SECONDS=30
+MEDIA_GATEWAY_URL=http://127.0.0.1:3025
+MEDIA_GATEWAY_TOKEN=segredo-aleatorio-exclusivo-do-gateway
+MEDIA_PUBLIC_IP=IP_PUBLICO_DA_VPS
+MEDIA_HTTP_PORT=3025
+MEDIA_UDP_MIN_PORT=40000
+MEDIA_UDP_MAX_PORT=40100
 NODE_ENV=production
 ```
 
@@ -49,6 +59,10 @@ NODE_ENV=production
 - `DATABASE_URL`: conexão PostgreSQL exclusiva da aplicação, preferencialmente via `127.0.0.1`.
 - `FRONTEND_URLS`: array JSON ou lista separada por vírgulas com as origens permitidas pelo CORS e Socket.IO.
 - `INTERNAL_API_KEY`: proteção temporária das rotas `/api/*`; envie-a em `X-API-Key`. Não exponha essa chave no frontend público.
+- `CALL_AGENT_AUTH_SECRET`: segredo HMAC de no mínimo 32 caracteres, igual no servidor do frontend; autentica a identidade real do atendente sem expor o segredo ao navegador.
+- `CALL_MEDIA_GATEWAY_ENABLED` e `CALL_AGENT_AUTH_REQUIRED`: feature flags para ativação gradual do gateway e da autenticação individual.
+- `MEDIA_GATEWAY_URL`/`MEDIA_GATEWAY_TOKEN`: canal local autenticado entre Express e o gateway Pion.
+- `MEDIA_PUBLIC_IP` e `MEDIA_UDP_MIN_PORT`/`MEDIA_UDP_MAX_PORT`: IP anunciado no ICE e faixa UDP pública exclusiva da mídia.
 
 O arquivo `.env` é ignorado pelo Git. Tokens e segredos não são registrados nos logs.
 
@@ -90,8 +104,13 @@ Fluxos disponíveis:
 - consultar histórico e estados em tempo real;
 - solicitar e consultar permissão outbound;
 - iniciar outbound somente quando a Meta retornar `start_call.can_perform_action=true`.
+- transferir uma chamada ativa diretamente entre atendentes, sem encerrar a sessão do cliente na Meta.
+
+Com o gateway ativado, o áudio segue `Meta ↔ gateway Pion (ICE-FULL) ↔ navegador`. Durante uma transferência, os dois navegadores podem preparar mídia, mas somente o atendente atual envia áudio ao cliente. A troca ocorre apenas após o novo atendente aceitar e o gateway detectar RTP recente; então a atribuição é persistida e a conexão do atendente anterior é encerrada. Rejeição, cancelamento, timeout ou falha de mídia mantêm a chamada com o atendente original.
 
 Para receber os eventos, o campo webhook `calls` deve ser habilitado manualmente no aplicativo Meta. O projeto não faz essa alteração. Endpoints, payloads, estados, Socket.IO e o fluxo do navegador estão em [`docs/API.md`](docs/API.md#whatsapp-calling).
+
+Instalação incremental, portas, teste manual e rollback do gateway estão em [`docs/CALL_TRANSFER_DEPLOY.md`](docs/CALL_TRANSFER_DEPLOY.md).
 
 ## Endpoints e testes
 

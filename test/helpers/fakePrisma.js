@@ -7,8 +7,8 @@ function matchesContactSearch(contact, search) {
 }
 
 function createFakePrisma() {
-  const state = { contacts: [], conversations: [], messages: [], assignments: [], calls: [] };
-  const next = { contact: 1, conversation: 1, message: 1, assignment: 1, call: 1 };
+  const state = { contacts: [], conversations: [], messages: [], assignments: [], calls: [], transfers: [] };
+  const next = { contact: 1, conversation: 1, message: 1, assignment: 1, call: 1, transfer: 1 };
   const now = () => new Date();
 
   const db = {
@@ -124,6 +124,8 @@ function createFakePrisma() {
           ? { ...state.contacts.find((contact) => contact.id === item.contactId) } : null;
         if (include?.conversation) result.conversation = item.conversationId
           ? { ...state.conversations.find((conversation) => conversation.id === item.conversationId) } : null;
+        if (include?.transfers) result.transfers = state.transfers
+          .filter((transfer) => transfer.callId === item.id).map((transfer) => ({ ...transfer }));
         return result;
       },
       async findUnique({ where, include }) {
@@ -139,10 +141,18 @@ function createFakePrisma() {
         return this.includeRelations(item, include);
       },
       async update({ where, data, include }) {
-        const item = state.calls.find((call) => call.metaCallId === where.metaCallId);
+        const item = state.calls.find((call) => call.metaCallId === where.metaCallId || call.id === where.id);
         if (!item) throw Object.assign(new Error("not found"), { code: "P2025" });
         Object.assign(item, data, { updatedAt: now() });
         return this.includeRelations(item, include);
+      },
+      async findFirst({ where }) {
+        const item = state.calls.find((call) => {
+          if (where.currentAgentId && call.currentAgentId !== where.currentAgentId) return false;
+          if (where.status && call.status !== where.status) return false;
+          return true;
+        });
+        return item ? { ...item } : null;
       },
       async findMany({ where = {}, skip = 0, take = 30, include }) {
         return state.calls.filter((item) => {
@@ -166,6 +176,57 @@ function createFakePrisma() {
           if (where.createdAt?.lt && item.createdAt >= where.createdAt.lt) return false;
           return true;
         }).length;
+      },
+    },
+    callTransfer: {
+      includeRelations(item, include) {
+        const result = { ...item };
+        if (include?.call) {
+          const call = state.calls.find((candidate) => candidate.id === item.callId);
+          result.call = db.call.includeRelations(call, include.call.include || {});
+        }
+        return result;
+      },
+      async findUnique({ where, include }) {
+        const item = state.transfers.find((transfer) => transfer.id === where.id);
+        return item ? this.includeRelations(item, include) : null;
+      },
+      async findFirst({ where, include }) {
+        const item = state.transfers.find((transfer) => {
+          if (where.callId && transfer.callId !== where.callId) return false;
+          if (where.status?.in && !where.status.in.includes(transfer.status)) return false;
+          return true;
+        });
+        return item ? this.includeRelations(item, include) : null;
+      },
+      async create({ data, include }) {
+        if (state.transfers.some((transfer) => transfer.callId === data.callId
+          && ["PENDING", "ACCEPTED"].includes(transfer.status))) {
+          throw Object.assign(new Error("unique"), { code: "P2002" });
+        }
+        const item = {
+          id: `00000000-0000-4000-8000-${String(next.transfer++).padStart(12, "0")}`,
+          status: "PENDING", requestedAt: now(), createdAt: now(), updatedAt: now(), ...data,
+        };
+        state.transfers.push(item);
+        return this.includeRelations(item, include);
+      },
+      async updateMany({ where, data }) {
+        const items = state.transfers.filter((transfer) => {
+          if (where.id && transfer.id !== where.id) return false;
+          if (where.status?.in && !where.status.in.includes(transfer.status)) return false;
+          return true;
+        });
+        items.forEach((item) => Object.assign(item, data, { updatedAt: now() }));
+        return { count: items.length };
+      },
+      async findMany({ where, include }) {
+        return state.transfers.filter((transfer) => {
+          if (where.callId && transfer.callId !== where.callId) return false;
+          if (where.status?.in && !where.status.in.includes(transfer.status)) return false;
+          if (where.expiresAt?.lte && transfer.expiresAt > where.expiresAt.lte) return false;
+          return true;
+        }).map((item) => this.includeRelations(item, include));
       },
     },
     message: {

@@ -343,14 +343,14 @@ Implementação baseada na WhatsApp Business Calling API oficial da Meta para Gr
 ### Arquitetura e WebRTC
 
 ```text
-WhatsApp do cliente ↔ Meta Calling API ↔ Express/Socket.IO ↔ navegador do atendente
+WhatsApp do cliente ↔ Meta Calling API ↔ gateway Pion ICE-FULL ↔ navegador do atendente
+                                      ↕
+                              Express/Socket.IO/PostgreSQL
 ```
 
-O navegador é responsável por `getUserMedia`, `RTCPeerConnection`, `setRemoteDescription`, criação do SDP answer/offer e reprodução do áudio remoto. O backend apenas transporta a sinalização e chama `POST /{PHONE_NUMBER_ID}/calls` com os contratos oficiais.
+O gateway mantém uma sessão WebRTC estável com a Meta e uma conexão separada com cada navegador. Ele retransmite RTP Opus sem gravar áudio. O Express controla autorização, presença, estados e transferências; SDP não é persistido nem enviado em eventos públicos.
 
-SDP não é persistido no banco. A offer recebida fica em memória por até cinco minutos e é enviada somente pelo evento autenticado `call:signal`. Após reinício do backend, chamadas que ainda não foram atendidas devem ser refeitas.
-
-O SDP deve ser RFC 8866 e usar os codecs aceitos pela Meta. A pilha da Meta é ICE-LITE; o `RTCPeerConnection` do navegador atua como ICE-FULL e inicia os checks STUN. A Meta não fornece um servidor TURN específico no contrato. Não há Coturn instalado: avalie TURN próprio apenas se testes reais mostrarem bloqueio de UDP/NAT/firewall.
+O serviço HTTP do gateway escuta somente em `127.0.0.1:3025`, exige bearer próprio e anuncia o IP público da VPS na faixa UDP configurada. Se redes de atendentes bloquearem UDP, avalie TURN próprio após testes reais; ele não é requisito automático desta instalação.
 
 ### Estados internos
 
@@ -377,7 +377,14 @@ O SDP deve ser RFC 8866 e usar os codecs aceitos pela Meta. A pilha da Meta é I
 - `call:ended`
 - `call:failed`
 - `call:updated`
-- `call:signal` — único evento que contém SDP
+- `call:claimed`
+- `call:transfer:incoming`
+- `call:transfer:accepted`
+- `call:transfer:rejected`
+- `call:transfer:cancelled`
+- `call:transfer:expired`
+- `call:transfer:completed`
+- `call:transferred:away`
 
 Exemplo de chamada recebida:
 
@@ -393,45 +400,53 @@ Exemplo de chamada recebida:
 }
 ```
 
-Sinalização separada:
-
-```json
-{
-  "callId": "wacid...",
-  "direction": "INBOUND",
-  "session": { "sdpType": "offer", "sdp": "v=0..." }
-}
-```
-
 ### Chamada recebida
 
-1. Escute `call:incoming` e `call:signal`.
+1. Escute `call:incoming` no socket privado do atendente.
 2. Solicite o microfone com `navigator.mediaDevices.getUserMedia({ audio: true })`.
-3. Crie `RTCPeerConnection`, adicione a faixa local e aplique a offer recebida.
-4. Gere a answer e aguarde o ICE gathering necessário.
-5. Envie a mesma answer para `pre-accept` e `accept`.
-6. Só libere o fluxo normal de mídia após `accept` retornar HTTP 200.
+3. Crie uma offer WebRTC do navegador e envie-a para `POST /api/calls/:callId/media`.
+4. Aplique a answer retornada pelo gateway e aguarde a conexão ICE.
+5. Confirme em `POST /api/calls/:callId/media-ready`.
+6. O backend só aceita a chamada na Meta depois de detectar RTP recente do atendente.
 
 ```js
-const session = { sdpType: "answer", sdp: peerConnection.localDescription.sdp };
-const body = { session, agent: { id: "72", name: "LEONARDO", signature: "Leonardo" } };
-
-await fetch(`${API}/api/calls/${encodeURIComponent(callId)}/pre-accept`, {
-  method: "POST", headers: { ...authHeaders, "Content-Type": "application/json" }, body: JSON.stringify(body),
-});
-await fetch(`${API}/api/calls/${encodeURIComponent(callId)}/accept`, {
-  method: "POST", headers: { ...authHeaders, "Content-Type": "application/json" }, body: JSON.stringify(body),
+const joined = await fetch(`${API}/api/calls/${encodeURIComponent(callId)}/media`, {
+  method: "POST",
+  headers: { ...authHeaders, "X-Agent-Token": signedAgentToken, "Content-Type": "application/json" },
+  body: JSON.stringify({ session: { sdpType: "offer", sdp: peer.localDescription.sdp } }),
+}).then((response) => response.json());
+await peer.setRemoteDescription({ type: "answer", sdp: joined.data.session.sdp });
+await fetch(`${API}/api/calls/${encodeURIComponent(callId)}/media-ready`, {
+  method: "POST", headers: { ...authHeaders, "X-Agent-Token": signedAgentToken },
 });
 ```
 
 Endpoints inbound:
 
-- `POST /api/calls/:callId/pre-accept`
-- `POST /api/calls/:callId/accept`
-- `POST /api/calls/:callId/reject` com `{ "agent": {...} }`
-- `POST /api/calls/:callId/terminate` com `{ "agent": {...} }`
+- `POST /api/calls/:callId/media`
+- `POST /api/calls/:callId/media-ready`
+- `POST /api/calls/:callId/reject`
+- `POST /api/calls/:callId/terminate`
 
-O atendente deve ser o responsável pela conversa, salvo usuário marcado como `director`. Estados inválidos retornam HTTP 409.
+`X-Agent-Token` é um token HMAC de 90 segundos emitido pelo servidor autenticado do frontend. Ele contém `sub`, `name`, `iss`, `aud`, `iat` e `exp`; o segredo compartilhado nunca deve chegar ao navegador. Estados inválidos retornam HTTP 409.
+
+### Transferência direta
+
+1. Consulte `GET /api/call-agents` e escolha um atendente `AVAILABLE`.
+2. O atendente atual chama `POST /api/calls/:callId/transfer` com `{ "targetAgentId": "72" }`.
+3. O destino recebe `call:transfer:incoming` e aceita ou recusa.
+4. Ao aceitar, o destino conecta seu navegador em `/media`, passando `transferId`.
+5. `/media-ready` com o mesmo `transferId` conclui a troca somente se houver RTP recente.
+
+Endpoints:
+
+- `GET /api/call-agents`
+- `POST /api/calls/:callId/transfer`
+- `POST /api/calls/:callId/transfer/:transferId/accept`
+- `POST /api/calls/:callId/transfer/:transferId/reject`
+- `POST /api/calls/:callId/transfer/:transferId/cancel`
+
+Há no máximo uma transferência aberta por chamada. O destino deve estar online e sem chamada ativa. Rejeição, cancelamento, expiração ou falha de mídia preservam o agente original; a conclusão atualiza atomicamente o responsável da chamada e da conversa e só depois desconecta o navegador anterior. Nenhuma operação de transferência chama `terminate` na Meta.
 
 ### Histórico
 
@@ -462,25 +477,34 @@ Content-Type: application/json
 
 Fora da janela de atendimento, use um template de `call_permission_request` aprovado; o endpoint livre não contorna a regra da Meta.
 
-Inicie somente após o usuário conceder permissão:
+Primeiro conecte o navegador ao gateway:
+
+```http
+POST /api/conversations/123/calls/media
+Content-Type: application/json
+
+{ "session": { "sdpType": "offer", "sdp": "v=0..." } }
+```
+
+Depois inicie somente após o usuário conceder permissão:
 
 ```http
 POST /api/conversations/123/calls
 Content-Type: application/json
 
 {
-  "session": { "sdpType": "offer", "sdp": "v=0..." },
-  "agent": { "id": "72", "name": "LEONARDO" }
+  "mediaSessionId": "sessao-provisoria-retornada"
 }
 ```
 
-Antes do `connect`, o backend consulta `GET /{PHONE_NUMBER_ID}/call_permissions` e exige `start_call.can_perform_action=true`. Sem permissão retorna HTTP 409 com `CALL_PERMISSION_REQUIRED`. A resposta SDP answer chega posteriormente em `call:signal`.
+Antes do `connect`, o backend exige mídia pronta e consulta `GET /{PHONE_NUMBER_ID}/call_permissions` com `start_call.can_perform_action=true`. Sem permissão retorna HTTP 409 com `CALL_PERMISSION_REQUIRED`. A answer da Meta é aplicada internamente à sessão estável do gateway.
 
 ### Segurança e limitações
 
 - `phone_number_id` vem da conversa/canal e não é assumido globalmente; `WHATSAPP_PHONE_NUMBER_ID` é apenas fallback para conversas antigas.
-- Toda ação exige API key e identificação do atendente.
+- Toda ação exige API key; mídia e transferência exigem também identidade HMAC do atendente.
 - Tokens, APP_SECRET e SDP nunca aparecem em logs.
+- A API do gateway não é publicada no Nginx e usa um bearer separado.
 - O rate limit é 30 ações/minuto e 120 consultas/minuto por origem.
 - O webhook responde HTTP 200 antes do processamento assíncrono e mensagens normais são processadas independentemente de falhas em chamadas.
 - Não há SIP, PSTN, VIP Solutions, gravação nem transcrição nesta implementação.
