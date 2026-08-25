@@ -2,10 +2,18 @@ const { Server } = require("socket.io");
 const { createCorsOptions } = require("../config/frontendOrigins");
 const logger = require("../utils/logger");
 const { isValidApiKey } = require("../middleware/authenticateRequest");
-const { verifyAgentToken } = require("../utils/agentToken");
+const { normalizeEnvironment, verifyAgentToken } = require("../utils/agentToken");
 const presence = require("../services/callPresence.service");
 
 let io;
+
+function deliveryEnvironment() {
+  return normalizeEnvironment(process.env.CALL_DELIVERY_ENV);
+}
+
+function agentRoom(agentId, environment = deliveryEnvironment()) {
+  return `agent:${String(agentId)}:${normalizeEnvironment(environment)}`;
+}
 
 function initializeSocket(httpServer) {
   io = new Server(httpServer, {
@@ -26,7 +34,7 @@ function initializeSocket(httpServer) {
 
   io.on("connection", (socket) => {
     if (socket.data.agent) {
-      socket.join(`agent:${socket.data.agent.id}`);
+      socket.join(agentRoom(socket.data.agent.id, socket.data.agent.environment));
       presence.connect(socket.data.agent, socket.id);
     }
     logger.info("socket_connected", { socketId: socket.id });
@@ -43,7 +51,7 @@ function emit(event, payload) {
 }
 
 function emitToAgent(agentId, event, payload) {
-  if (io && agentId) io.to(`agent:${String(agentId)}`).emit(event, payload);
+  if (io && agentId) io.to(agentRoom(agentId)).emit(event, payload);
 }
 
 function emitToAgents(agentIds, event, payload) {
@@ -51,11 +59,11 @@ function emitToAgents(agentIds, event, payload) {
 }
 
 function joinAgentCall(agentId, callId) {
-  if (io && agentId && callId) io.in(`agent:${String(agentId)}`).socketsJoin(`call:${String(callId)}`);
+  if (io && agentId && callId) io.in(agentRoom(agentId)).socketsJoin(`call:${String(callId)}`);
 }
 
 function leaveAgentCall(agentId, callId) {
-  if (io && agentId && callId) io.in(`agent:${String(agentId)}`).socketsLeave(`call:${String(callId)}`);
+  if (io && agentId && callId) io.in(agentRoom(agentId)).socketsLeave(`call:${String(callId)}`);
 }
 
 function closeCallRoom(callId) {
@@ -67,6 +75,7 @@ function isSocketEnabled() {
 }
 
 module.exports = {
+  agentRoom,
   closeCallRoom, emit, emitToAgent, emitToAgents, initializeSocket,
   isSocketEnabled, joinAgentCall, leaveAgentCall,
 };

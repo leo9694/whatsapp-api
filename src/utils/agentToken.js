@@ -8,6 +8,11 @@ function decodePart(value) {
   return JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
 }
 
+function normalizeEnvironment(value) {
+  return String(value || "production").trim().toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "").slice(0, 32) || "production";
+}
+
 function verifyAgentToken(token, secret = process.env.CALL_AGENT_AUTH_SECRET) {
   const configured = String(secret || "").trim();
   if (configured.length < 32) throw new AppError("Autenticação individual de chamadas não configurada.", 503);
@@ -33,7 +38,8 @@ function verifyAgentToken(token, secret = process.env.CALL_AGENT_AUTH_SECRET) {
     id: String(payload.sub).slice(0, 64),
     name: String(payload.name).slice(0, 160),
     director: payload.director === true,
+    environment: normalizeEnvironment(payload.environment),
   };
 }
 
-module.exports = { AUDIENCE, ISSUER, verifyAgentToken };
+module.exports = { AUDIENCE, ISSUER, normalizeEnvironment, verifyAgentToken };

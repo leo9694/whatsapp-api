@@ -172,6 +172,19 @@ test("token HMAC fornece identidade confiável e rejeita adulteração", () => {
     iss: ISSUER, aud: AUDIENCE, sub: A.id, name: A.name, iat: now, exp: now + 60,
   })).toString("base64url");
   const signature = crypto.createHmac("sha256", secret).update(payload).digest("base64url");
-  assert.deepEqual(verifyAgentToken(`${payload}.${signature}`, secret), { id: A.id, name: A.name, director: false });
+  assert.deepEqual(verifyAgentToken(`${payload}.${signature}`, secret), {
+    id: A.id, name: A.name, director: false, environment: "production",
+  });
   assert.throws(() => verifyAgentToken(`${payload}.${signature}x`, secret));
+});
+
+test("token preserva o ambiente que receberá chamadas", () => {
+  const secret = "segredo-de-teste-comprido-com-32-caracteres";
+  const now = Math.floor(Date.now() / 1000);
+  const payload = Buffer.from(JSON.stringify({
+    iss: ISSUER, aud: AUDIENCE, sub: A.id, name: A.name,
+    environment: "LOCAL", iat: now, exp: now + 60,
+  })).toString("base64url");
+  const signature = crypto.createHmac("sha256", secret).update(payload).digest("base64url");
+  assert.equal(verifyAgentToken(`${payload}.${signature}`, secret).environment, "local");
 });
