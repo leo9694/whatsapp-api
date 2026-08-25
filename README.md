@@ -102,13 +102,13 @@ Fluxos disponíveis:
 - chamada recebida: `call:incoming` → SDP offer em `call:signal` → `pre-accept` → `accept`;
 - recusar e encerrar chamadas;
 - consultar histórico e estados em tempo real;
-- solicitar e consultar permissão outbound;
+- solicitar e consultar permissão outbound, persistida em `CallPermission`;
 - iniciar outbound somente quando a Meta retornar `start_call.can_perform_action=true`.
 - transferir uma chamada ativa diretamente entre atendentes, sem encerrar a sessão do cliente na Meta.
 
 Com o gateway ativado, o áudio segue `Meta ↔ gateway Pion (ICE-FULL) ↔ navegador`. Durante uma transferência, os dois navegadores podem preparar mídia, mas somente o atendente atual envia áudio ao cliente. A troca ocorre apenas após o novo atendente aceitar e o gateway detectar RTP recente; então a atribuição é persistida e a conexão do atendente anterior é encerrada. Rejeição, cancelamento, timeout ou falha de mídia mantêm a chamada com o atendente original.
 
-Para receber os eventos, o campo webhook `calls` deve ser habilitado manualmente no aplicativo Meta. O projeto não faz essa alteração. Endpoints, payloads, estados, Socket.IO e o fluxo do navegador estão em [`docs/API.md`](docs/API.md#whatsapp-calling).
+Para receber chamadas, o campo webhook `calls` deve ser habilitado manualmente no aplicativo Meta. A resposta à solicitação de permissão chega pelo campo `messages`, como `interactive.call_permission_reply`; o backend persiste a decisão e emite `call:permission:updated`. O projeto não altera essas assinaturas. Endpoints, payloads, estados, Socket.IO e o fluxo do navegador estão em [`docs/API.md`](docs/API.md#whatsapp-calling).
 
 Instalação incremental, portas, teste manual e rollback do gateway estão em [`docs/CALL_TRANSFER_DEPLOY.md`](docs/CALL_TRANSFER_DEPLOY.md).
 

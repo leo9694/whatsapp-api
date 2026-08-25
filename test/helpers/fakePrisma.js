@@ -7,8 +7,14 @@ function matchesContactSearch(contact, search) {
 }
 
 function createFakePrisma() {
-  const state = { contacts: [], conversations: [], messages: [], assignments: [], calls: [], transfers: [] };
-  const next = { contact: 1, conversation: 1, message: 1, assignment: 1, call: 1, transfer: 1 };
+  const state = {
+    contacts: [], conversations: [], messages: [], assignments: [], calls: [],
+    transfers: [], permissions: [],
+  };
+  const next = {
+    contact: 1, conversation: 1, message: 1, assignment: 1, call: 1,
+    transfer: 1, permission: 1,
+  };
   const now = () => new Date();
 
   const db = {
@@ -114,6 +120,40 @@ function createFakePrisma() {
       async create({ data }) {
         const item = { id: next.assignment++, createdAt: now(), ...data };
         state.assignments.push(item);
+        return { ...item };
+      },
+    },
+    callPermission: {
+      async findUnique({ where }) {
+        let item;
+        if (where.lastWebhookWamid !== undefined) {
+          item = state.permissions.find((permission) => permission.lastWebhookWamid === where.lastWebhookWamid);
+        } else if (where.conversationId_phoneNumberId) {
+          const key = where.conversationId_phoneNumberId;
+          item = state.permissions.find((permission) => permission.conversationId === key.conversationId
+            && permission.phoneNumberId === key.phoneNumberId);
+        } else item = state.permissions.find((permission) => permission.id === where.id);
+        return item ? { ...item } : null;
+      },
+      async upsert({ where, create, update }) {
+        const key = where.conversationId_phoneNumberId;
+        let item = state.permissions.find((permission) => permission.conversationId === key.conversationId
+          && permission.phoneNumberId === key.phoneNumberId);
+        if (update.lastWebhookWamid && state.permissions.some((permission) => permission !== item
+          && permission.lastWebhookWamid === update.lastWebhookWamid)) {
+          throw Object.assign(new Error("unique"), { code: "P2002" });
+        }
+        if (item) Object.assign(item, update, { updatedAt: now() });
+        else {
+          item = { id: next.permission++, createdAt: now(), updatedAt: now(), ...create };
+          state.permissions.push(item);
+        }
+        return { ...item };
+      },
+      async update({ where, data }) {
+        const item = state.permissions.find((permission) => permission.id === where.id);
+        if (!item) throw Object.assign(new Error("not found"), { code: "P2025" });
+        Object.assign(item, data, { updatedAt: now() });
         return { ...item };
       },
     },

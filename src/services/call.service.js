@@ -11,6 +11,7 @@ const signalStore = require("./callSignalStore");
 const mediaGateway = require("./callMediaGateway.service");
 const presence = require("./callPresence.service");
 const transferService = require("./callTransfer.service");
+const permissionService = require("./callPermission.service");
 const { toCallDto } = require("../utils/callDto");
 const { toConversationDto } = require("../utils/conversationDto");
 
@@ -353,7 +354,9 @@ async function getPermission(conversationId, agent, dependencies = {}) {
   const permission = await (dependencies.getCallPermission || whatsappService.getCallPermission)(
     phoneNumberId, conversation.contact.waId,
   );
-  return { phoneNumberId, ...permission };
+  let stored = await permissionService.syncFromMeta({ conversation, phoneNumberId, meta: permission, agent }, { db });
+  stored = await permissionService.expireIfNeeded(stored, { db });
+  return { phoneNumberId, ...permissionService.toDto(stored), permission: permission.permission, actions: permission.actions };
 }
 
 async function requestPermission(conversationId, input, dependencies = {}) {
@@ -365,16 +368,35 @@ async function requestPermission(conversationId, input, dependencies = {}) {
   const current = await (dependencies.getCallPermission || whatsappService.getCallPermission)(
     phoneNumberId, conversation.contact.waId,
   );
+  const stored = await permissionService.syncFromMeta({
+    conversation, phoneNumberId, meta: current, agent: input.agent,
+  }, { db });
+  if (permissionService.toDto(stored).canCall) {
+    return { phoneNumberId, ...permissionService.toDto(stored), permission: current.permission, actions: current.actions };
+  }
   const canRequest = current.actions?.find((item) => item.action_name === "send_call_permission_request")?.can_perform_action;
   if (!canRequest) {
     const error = new AppError("A Meta não permite uma nova solicitação de chamada neste momento.", 409);
     error.publicCode = "CALL_PERMISSION_REQUEST_UNAVAILABLE";
     throw error;
   }
+  logger.info("[CALL_PERMISSION] requested", {
+    conversationId: conversation.id,
+    contactId: conversation.contactId,
+    phoneNumberId,
+    agentId: String(input.agent.id),
+  });
   const meta = await (dependencies.requestCallPermission || whatsappService.requestCallPermission)(
     phoneNumberId, conversation.contact.waId, input.body,
   );
-  return { phoneNumberId, messageId: meta.messages?.[0]?.id || null, permission: current.permission };
+  const messageId = meta.messages?.[0]?.id || null;
+  logger.info("[CALL_PERMISSION] meta accepted request", {
+    conversationId: conversation.id, phoneNumberId, messageId,
+  });
+  const pending = await permissionService.markRequested({
+    conversation, phoneNumberId, agent: input.agent, messageId,
+  }, { db, socket: dependencies.socket });
+  return { phoneNumberId, messageId, ...permissionService.toDto(pending) };
 }
 
 async function initiate(conversationId, input, dependencies = {}) {
@@ -383,9 +405,12 @@ async function initiate(conversationId, input, dependencies = {}) {
   const permission = await (dependencies.getCallPermission || whatsappService.getCallPermission)(
     phoneNumberId, conversation.contact.waId,
   );
-  const canStart = permission.actions?.find((item) => item.action_name === "start_call")?.can_perform_action;
-  if (!canStart) {
-    const error = new AppError("É necessário obter permissão do cliente antes de iniciar a chamada.", 409);
+  let storedPermission = await permissionService.syncFromMeta({
+    conversation, phoneNumberId, meta: permission, agent: input.agent,
+  }, { db });
+  storedPermission = await permissionService.expireIfNeeded(storedPermission, { db });
+  if (!permissionService.toDto(storedPermission).canCall) {
+    const error = new AppError("O cliente ainda não autorizou ligações.", 409);
     error.publicCode = "CALL_PERMISSION_REQUIRED";
     throw error;
   }
@@ -420,6 +445,7 @@ async function initiate(conversationId, input, dependencies = {}) {
     startedAt: now,
     lastEventAt: now,
   }, db);
+  socket.emitToAgent(input.agent.id, "call:outgoing", toCallDto(saved));
   emitCall(saved);
   presence.markBusy(input.agent.id, callId);
   socket.joinAgentCall(input.agent.id, callId);
@@ -516,4 +542,6 @@ module.exports = {
   processCallEvent, processCallStatus, preAccept, accept, reject, terminate, listCalls,
   getPermission, requestPermission, initiate, joinMedia, mediaReady, createOutboundMedia,
   listAgents, parseTimestamp,
+  processCallPermission: permissionService.processWebhook,
+  isCallPermissionReply: permissionService.isPermissionReply,
 };

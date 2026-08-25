@@ -460,8 +460,10 @@ A paginação é obrigatória e os limites aceitos são de 1 a 100 itens.
 Consulte a permissão atual:
 
 ```http
-GET /api/conversations/123/calls/permission?id=72&name=LEONARDO&director=false
+GET /api/conversations/123/call-permission?id=72&name=LEONARDO&director=false
 ```
+
+A resposta normalizada contém `status`, `canCall`, `requestedAt`, `grantedAt` e `expiresAt`. O endpoint legado `GET /calls/permission` permanece compatível.
 
 Solicite permissão durante uma janela de atendimento aberta:
 
@@ -476,6 +478,8 @@ Content-Type: application/json
 ```
 
 Fora da janela de atendimento, use um template de `call_permission_request` aprovado; o endpoint livre não contorna a regra da Meta.
+
+A decisão do cliente chega no webhook oficial de `messages` como uma mensagem interativa do tipo `call_permission_reply`. Os estados `PENDING`, `GRANTED`, `DENIED`, `EXPIRED` e `REVOKED` são persistidos em `CallPermission`. A mudança é enviada ao atendente pelo evento privado `call:permission:updated`; ela apenas habilita o botão e nunca inicia uma chamada automaticamente.
 
 Primeiro conecte o navegador ao gateway:
 
@@ -498,6 +502,8 @@ Content-Type: application/json
 ```
 
 Antes do `connect`, o backend exige mídia pronta e consulta `GET /{PHONE_NUMBER_ID}/call_permissions` com `start_call.can_perform_action=true`. Sem permissão retorna HTTP 409 com `CALL_PERMISSION_REQUIRED`. A answer da Meta é aplicada internamente à sessão estável do gateway.
+
+Ao criar a chamada, o backend emite `call:outgoing` e continua usando os eventos `call:ringing`, `call:active`, `call:failed` e `call:ended` para atualizar o navegador.
 
 ### Segurança e limitações
 

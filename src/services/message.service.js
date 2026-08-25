@@ -20,8 +20,12 @@ function extractContent(message) {
   const media = MEDIA_TYPES.has(type) ? message[type] || {} : {};
   let text = message?.text?.body || null;
   if (type === "interactive") {
+    const callPermission = message.interactive?.type === "call_permission_reply"
+      ? message.interactive.call_permission_reply : null;
     const reply = message.interactive?.button_reply || message.interactive?.list_reply;
-    text = reply?.title || reply?.description || reply?.id || null;
+    text = callPermission
+      ? callPermission.response === "accept" ? "Ligação autorizada" : "Permissão de ligação recusada"
+      : reply?.title || reply?.description || reply?.id || null;
     if (text) type = "text";
   }
   if (type === "button") {

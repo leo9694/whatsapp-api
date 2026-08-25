@@ -51,6 +51,14 @@ enum CallTransferStatus {
   EXPIRED
 }
 
+enum CallPermissionStatus {
+  PENDING
+  GRANTED
+  DENIED
+  EXPIRED
+  REVOKED
+}
+
 model Contact {
   id            Int            @id @default(autoincrement())
   waId          String         @unique
@@ -61,6 +69,7 @@ model Contact {
   updatedAt     DateTime       @updatedAt
   conversations Conversation[]
   calls         Call[]
+  callPermissions CallPermission[]
 }
 
 model Conversation {
@@ -87,12 +96,42 @@ model Conversation {
   messages                       Message[]
   assignments                    ConversationAssignment[]
   calls                          Call[]
+  callPermissions                CallPermission[]
 
   @@index([contactId])
   @@index([lastMessageAt])
   @@index([status, lastMessageAt])
   @@index([initialTemplateWamid])
   @@index([customerServiceWindowExpiresAt])
+}
+
+model CallPermission {
+  id                   Int                  @id @default(autoincrement())
+  conversationId       Int
+  contactId            Int
+  phoneNumberId        String
+  status               CallPermissionStatus
+  canStartCall         Boolean              @default(false)
+  isPermanent          Boolean              @default(false)
+  metaStatus           String?
+  responseSource       String?
+  requestedByAgentId   String?
+  requestedByAgentName String?
+  requestedAt          DateTime?
+  grantedAt            DateTime?
+  deniedAt             DateTime?
+  revokedAt            DateTime?
+  expiresAt            DateTime?
+  metaReference        String?
+  lastWebhookWamid     String?              @unique
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  conversation         Conversation         @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  contact              Contact              @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, phoneNumberId])
+  @@index([contactId, phoneNumberId])
+  @@index([status, expiresAt])
 }
 
 model Call {

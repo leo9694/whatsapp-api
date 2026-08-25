@@ -19,6 +19,7 @@ router.post("/api/calls/:callId/reject", requireConfiguredAgent, callActionLimit
 router.post("/api/calls/:callId/terminate", requireConfiguredAgent, callActionLimiter, controller.terminate);
 router.get("/api/conversations/:id/calls", callQueryLimiter, controller.listConversation);
 router.get("/api/conversations/:id/calls/permission", requireConfiguredAgent, callQueryLimiter, controller.permission);
+router.get("/api/conversations/:id/call-permission", requireConfiguredAgent, callQueryLimiter, controller.permission);
 router.post("/api/conversations/:id/calls/permission", requireConfiguredAgent, callActionLimiter, controller.requestPermission);
 router.post("/api/conversations/:id/calls/media", requireAgent, callActionLimiter, controller.createOutboundMedia);
 router.post("/api/conversations/:id/calls", requireConfiguredAgent, callActionLimiter, controller.initiate);

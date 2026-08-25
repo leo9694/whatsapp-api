@@ -46,11 +46,11 @@ async function terminate(req, res, next) {
 
 async function permission(req, res, next) {
   try {
-    const agent = agentSchema.parse({
+    const agent = req.agent || agentSchema.parse({
       ...req.query,
       ...(req.query.director !== undefined ? { director: req.query.director === "true" } : {}),
     });
-    return success(res, await callService.getPermission(idSchema.parse(req.params.id), req.agent || agent));
+    return success(res, await callService.getPermission(idSchema.parse(req.params.id), agent));
   }
   catch (error) { return next(error); }
 }

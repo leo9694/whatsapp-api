@@ -63,6 +63,15 @@ async function processWebhookPayload(payload, dependencies = {}) {
           text: message?.text?.body || null,
           contactProfileName: contact?.profile?.name || null,
         });
+        if (callsApi.isCallPermissionReply?.(message)) {
+          try {
+            await callsApi.processCallPermission({ message, contacts, phoneNumberId });
+          } catch (error) {
+            logger.error("call_permission_processing_failed", {
+              messageId: message?.id || null, phoneNumberId, message: error.message,
+            });
+          }
+        }
         try {
           const result = await messagesApi.processInboundMessage({ message, contacts, phoneNumberId });
           if (result?.duplicate) {
