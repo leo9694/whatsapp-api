@@ -19,7 +19,8 @@ ProtectSystem=strict
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Pion consulta a tabela de rotas via netlink ao criar o transporte ICE.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 LockPersonality=true
 LimitNOFILE=65536
 
