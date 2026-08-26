@@ -7,11 +7,15 @@ const presence = require("../services/callPresence.service");
 
 let io;
 
-function deliveryEnvironment() {
-  return normalizeEnvironment(process.env.CALL_DELIVERY_ENV);
+function deliveryEnvironments() {
+  const configured = String(process.env.CALL_DELIVERY_ENVS || process.env.CALL_DELIVERY_ENV || "production")
+    .split(",")
+    .map((value) => normalizeEnvironment(value))
+    .filter(Boolean);
+  return [...new Set(configured.length ? configured : ["production"])];
 }
 
-function agentRoom(agentId, environment = deliveryEnvironment()) {
+function agentRoom(agentId, environment = deliveryEnvironments()[0]) {
   return `agent:${String(agentId)}:${normalizeEnvironment(environment)}`;
 }
 
@@ -51,7 +55,10 @@ function emit(event, payload) {
 }
 
 function emitToAgent(agentId, event, payload) {
-  if (io && agentId) io.to(agentRoom(agentId)).emit(event, payload);
+  if (!io || !agentId) return;
+  deliveryEnvironments().forEach((environment) => {
+    io.to(agentRoom(agentId, environment)).emit(event, payload);
+  });
 }
 
 function emitToAgents(agentIds, event, payload) {
@@ -59,11 +66,17 @@ function emitToAgents(agentIds, event, payload) {
 }
 
 function joinAgentCall(agentId, callId) {
-  if (io && agentId && callId) io.in(agentRoom(agentId)).socketsJoin(`call:${String(callId)}`);
+  if (!io || !agentId || !callId) return;
+  deliveryEnvironments().forEach((environment) => {
+    io.in(agentRoom(agentId, environment)).socketsJoin(`call:${String(callId)}`);
+  });
 }
 
 function leaveAgentCall(agentId, callId) {
-  if (io && agentId && callId) io.in(agentRoom(agentId)).socketsLeave(`call:${String(callId)}`);
+  if (!io || !agentId || !callId) return;
+  deliveryEnvironments().forEach((environment) => {
+    io.in(agentRoom(agentId, environment)).socketsLeave(`call:${String(callId)}`);
+  });
 }
 
 function closeCallRoom(callId) {
@@ -75,7 +88,7 @@ function isSocketEnabled() {
 }
 
 module.exports = {
-  agentRoom,
+  agentRoom, deliveryEnvironments,
   closeCallRoom, emit, emitToAgent, emitToAgents, initializeSocket,
   isSocketEnabled, joinAgentCall, leaveAgentCall,
 };
