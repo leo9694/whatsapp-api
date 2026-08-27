@@ -64,7 +64,8 @@ async function transcodeWebmToOgg(file) {
     await execFileAsync(ffmpegPath, [
       "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
       "-i", file.path, "-map_metadata", "-1", "-vn", "-t", "600",
-      "-c:a", "libopus", "-b:a", "32k", "-vbr", "on", "-application", "voip",
+      "-c:a", "libopus", "-ac", "1", "-ar", "48000",
+      "-b:a", "32k", "-vbr", "on", "-application", "voip",
       "-threads", "1", outputPath,
     ], { timeout: 60000, maxBuffer: 1024 * 1024, windowsHide: true });
     const stat = await fs.stat(outputPath);

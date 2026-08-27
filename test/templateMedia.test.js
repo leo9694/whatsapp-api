@@ -187,7 +187,7 @@ test("converte gravação WebM do navegador para OGG/Opus", async () => {
   let converted;
   try {
     await execFileAsync(ffmpegPath, [
-      "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono",
+      "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
       "-t", "0.1", "-c:a", "libopus", "-f", "webm", inputPath,
     ]);
     const stat = await fs.stat(inputPath);
@@ -197,6 +197,10 @@ test("converte gravação WebM do navegador para OGG/Opus", async () => {
     assert.equal(converted.mimetype, "audio/ogg");
     assert.equal(converted.originalname, "gravacao.ogg");
     assert.equal(await mediaService.sniffMime(converted.path, converted.mimetype), "audio/ogg");
+    const ogg = await fs.readFile(converted.path);
+    const opusHead = ogg.indexOf(Buffer.from("OpusHead"));
+    assert.notEqual(opusHead, -1);
+    assert.equal(ogg[opusHead + 9], 1);
   } finally {
     await mediaService.cleanupUpload(converted);
     await fs.rm(directory, { recursive: true, force: true });
