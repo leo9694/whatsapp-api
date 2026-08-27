@@ -61,6 +61,21 @@ test("WhatsApp service percorre paginação da Graph API ao listar templates", a
   } finally { global.fetch = originalFetch; }
 });
 
+test("envia áudio OGG como mensagem de voz", async () => {
+  const originalFetch = global.fetch;
+  process.env.WHATSAPP_ACCESS_TOKEN = "EAA-test-token";
+  process.env.WHATSAPP_PHONE_NUMBER_ID = "456";
+  let body;
+  global.fetch = async (_url, options) => {
+    body = JSON.parse(options.body);
+    return { ok: true, status: 200, json: async () => ({ messages: [{ id: "wamid.audio" }] }) };
+  };
+  try {
+    await whatsappService.sendAudioMessage("5565999999999", "media-audio", { voice: true });
+    assert.deepEqual(body.audio, { id: "media-audio", voice: true });
+  } finally { global.fetch = originalFetch; }
+});
+
 test("gera preview e informa parâmetros ausentes sem enviar à Meta", async () => {
   templateService.clearTemplateCache();
   const dependencies = { listMessageTemplates: async () => [approvedTemplate] };
@@ -179,6 +194,27 @@ test("valida MIME real, faz upload mockado e limpa arquivo temporário", async (
   await mediaService.cleanupUpload(file);
   await assert.rejects(fs.access(filePath));
   await fs.rm(directory, { recursive: true, force: true });
+});
+
+test("declara o codec Opus no MIME do áudio OGG enviado à Meta", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "nsw-ogg-"));
+  const filePath = path.join(directory, "gravacao.ogg");
+  await fs.writeFile(filePath, Buffer.from("OggS-test"));
+  const file = { path: filePath, size: 9, mimetype: "audio/ogg", originalname: "gravacao.ogg" };
+  let uploadInput;
+  try {
+    const uploaded = await mediaService.upload(file, "audio", {
+      uploadMedia: async (input) => {
+        uploadInput = input;
+        return { id: "media-ogg" };
+      },
+    });
+    assert.equal(uploadInput.mimeType, "audio/ogg; codecs=opus");
+    assert.equal(uploaded.mimeType, "audio/ogg; codecs=opus");
+  } finally {
+    await mediaService.cleanupUpload(file);
+    await fs.rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("converte gravação WebM do navegador para OGG/Opus", async () => {

@@ -176,8 +176,11 @@ async function sendDocumentMessage(to, mediaId, caption, filename) {
   })).data;
 }
 
-async function sendAudioMessage(to, mediaId) {
-  return (await sendMessage(to, { type: "audio", audio: { id: mediaId } })).data;
+async function sendAudioMessage(to, mediaId, options = {}) {
+  return (await sendMessage(to, {
+    type: "audio",
+    audio: { id: mediaId, ...(options.voice === true ? { voice: true } : {}) },
+  })).data;
 }
 
 async function sendVideoMessage(to, mediaId, caption) {
