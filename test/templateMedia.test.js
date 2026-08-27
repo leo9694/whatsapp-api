@@ -196,7 +196,7 @@ test("valida MIME real, faz upload mockado e limpa arquivo temporário", async (
   await fs.rm(directory, { recursive: true, force: true });
 });
 
-test("declara o codec Opus no MIME do áudio OGG enviado à Meta", async () => {
+test("envia OGG/Opus com o MIME de upload aceito pela Meta", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "nsw-ogg-"));
   const filePath = path.join(directory, "gravacao.ogg");
   await fs.writeFile(filePath, Buffer.from("OggS-test"));
@@ -209,8 +209,8 @@ test("declara o codec Opus no MIME do áudio OGG enviado à Meta", async () => {
         return { id: "media-ogg" };
       },
     });
-    assert.equal(uploadInput.mimeType, "audio/ogg; codecs=opus");
-    assert.equal(uploaded.mimeType, "audio/ogg; codecs=opus");
+    assert.equal(uploadInput.mimeType, "audio/ogg");
+    assert.equal(uploaded.mimeType, "audio/ogg");
   } finally {
     await mediaService.cleanupUpload(file);
     await fs.rm(directory, { recursive: true, force: true });
