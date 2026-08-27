@@ -196,28 +196,33 @@ test("valida MIME real, faz upload mockado e limpa arquivo temporário", async (
   await fs.rm(directory, { recursive: true, force: true });
 });
 
-test("envia OGG/Opus com o MIME de upload aceito pela Meta", async () => {
+test("converte OGG/Opus para MP3 antes do upload para a Meta", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "nsw-ogg-"));
   const filePath = path.join(directory, "gravacao.ogg");
-  await fs.writeFile(filePath, Buffer.from("OggS-test"));
-  const file = { path: filePath, size: 9, mimetype: "audio/ogg", originalname: "gravacao.ogg" };
+  await execFileAsync(ffmpegPath, [
+    "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono",
+    "-t", "0.1", "-c:a", "libopus", filePath,
+  ]);
+  const stat = await fs.stat(filePath);
+  const file = { path: filePath, size: stat.size, mimetype: "audio/ogg", originalname: "gravacao.ogg" };
   let uploadInput;
   try {
     const uploaded = await mediaService.upload(file, "audio", {
       uploadMedia: async (input) => {
         uploadInput = input;
-        return { id: "media-ogg" };
+        return { id: "media-mp3" };
       },
     });
-    assert.equal(uploadInput.mimeType, "audio/ogg");
-    assert.equal(uploaded.mimeType, "audio/ogg");
+    assert.equal(uploadInput.mimeType, "audio/mpeg");
+    assert.equal(uploaded.mimeType, "audio/mpeg");
+    assert.equal(uploaded.filename, "gravacao.mp3");
   } finally {
     await mediaService.cleanupUpload(file);
     await fs.rm(directory, { recursive: true, force: true });
   }
 });
 
-test("converte gravação WebM do navegador para OGG/Opus", async () => {
+test("converte gravação WebM do navegador para MP3 mono", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "nsw-webm-"));
   const inputPath = path.join(directory, "browser-recording");
   let converted;
@@ -229,14 +234,10 @@ test("converte gravação WebM do navegador para OGG/Opus", async () => {
     const stat = await fs.stat(inputPath);
     const input = { path: inputPath, size: stat.size, mimetype: "audio/webm;codecs=opus", originalname: "gravacao.webm" };
     assert.equal((await mediaService.validateUpload(input, "audio")).mimeType, "audio/webm");
-    converted = await mediaService.transcodeWebmToOgg(input);
-    assert.equal(converted.mimetype, "audio/ogg");
-    assert.equal(converted.originalname, "gravacao.ogg");
-    assert.equal(await mediaService.sniffMime(converted.path, converted.mimetype), "audio/ogg");
-    const ogg = await fs.readFile(converted.path);
-    const opusHead = ogg.indexOf(Buffer.from("OpusHead"));
-    assert.notEqual(opusHead, -1);
-    assert.equal(ogg[opusHead + 9], 1);
+    converted = await mediaService.transcodeAudioToMp3(input);
+    assert.equal(converted.mimetype, "audio/mpeg");
+    assert.equal(converted.originalname, "gravacao.mp3");
+    assert.equal(await mediaService.sniffMime(converted.path, converted.mimetype), "audio/mpeg");
   } finally {
     await mediaService.cleanupUpload(converted);
     await fs.rm(directory, { recursive: true, force: true });
@@ -301,6 +302,7 @@ test("envia image, document, video e audio com upload e Meta mockados", async ()
     });
     assert.equal(message.type, kind);
     assert.equal(message.mediaId, `media-${kind}`);
+    if (kind === "audio") assert.equal(message.voice, false);
   }
 });
 

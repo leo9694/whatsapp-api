@@ -232,9 +232,10 @@ async function sendMedia(id, kind, file, options = {}, agent, dependencies = {})
     audio: dependencies.sendAudioMessage || whatsappService.sendAudioMessage,
   };
   const send = senders[kind];
+  const sendsAsVoice = kind === "audio" && Boolean(options.voice) && uploaded.mimeType === "audio/ogg";
   let meta;
   if (kind === "document") meta = await send(conversation.contact.waId, uploaded.mediaId, options.caption, options.filename || uploaded.filename);
-  else if (kind === "audio") meta = await send(conversation.contact.waId, uploaded.mediaId, { voice: options.voice });
+  else if (kind === "audio") meta = await send(conversation.contact.waId, uploaded.mediaId, { voice: sendsAsVoice });
   else meta = await send(conversation.contact.waId, uploaded.mediaId, options.caption);
   const now = new Date();
   const message = await persistOutbound(id, {
@@ -246,7 +247,7 @@ async function sendMedia(id, kind, file, options = {}, agent, dependencies = {})
     mimeType: uploaded.mimeType,
     filename: kind === "document" ? options.filename || uploaded.filename : uploaded.filename,
     caption: options.caption || null,
-    voice: kind === "audio" ? Boolean(options.voice) : null,
+    voice: kind === "audio" ? sendsAsVoice : null,
     senderUserId: agent ? String(agent.id) : null,
     senderUserName: agent?.name || null,
   }, db);

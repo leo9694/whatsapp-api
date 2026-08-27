@@ -57,31 +57,30 @@ async function validateUpload(file, kind) {
   return { mimeType: detected, filename: safeFilename(file.originalname), size: file.size };
 }
 
-async function transcodeWebmToOgg(file) {
+async function transcodeAudioToMp3(file) {
   if (!ffmpegPath) throw new AppError("Conversão de áudio indisponível no servidor.", 503);
-  const outputPath = path.join(path.dirname(file.path), `${crypto.randomBytes(24).toString("hex")}.ogg`);
+  const outputPath = path.join(path.dirname(file.path), `${crypto.randomBytes(24).toString("hex")}.mp3`);
   try {
     await execFileAsync(ffmpegPath, [
       "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
       "-i", file.path, "-map_metadata", "-1", "-vn", "-t", "600",
-      "-c:a", "libopus", "-ac", "1", "-ar", "48000",
-      "-b:a", "32k", "-vbr", "on", "-application", "voip",
+      "-c:a", "libmp3lame", "-ac", "1", "-ar", "44100", "-b:a", "64k",
       "-threads", "1", outputPath,
     ], { timeout: 60000, maxBuffer: 1024 * 1024, windowsHide: true });
     const stat = await fs.stat(outputPath);
-    if (!stat.size || stat.size > MEDIA_RULES.audio.maxBytes || await sniffMime(outputPath, "audio/ogg") !== "audio/ogg") {
+    if (!stat.size || stat.size > MEDIA_RULES.audio.maxBytes || await sniffMime(outputPath, "audio/mpeg") !== "audio/mpeg") {
       throw new Error("invalid transcoded output");
     }
     return {
       path: outputPath,
       size: stat.size,
-      mimetype: "audio/ogg",
-      originalname: `${path.parse(safeFilename(file.originalname)).name || "audio"}.ogg`,
+      mimetype: "audio/mpeg",
+      originalname: `${path.parse(safeFilename(file.originalname)).name || "audio"}.mp3`,
     };
   } catch (error) {
     await fs.unlink(outputPath).catch(() => {});
     if (error instanceof AppError) throw error;
-    throw new AppError("Não foi possível converter o áudio WebM para OGG/Opus.", 422);
+    throw new AppError("Não foi possível converter o áudio para MP3.", 422);
   }
 }
 
@@ -92,12 +91,12 @@ async function cleanupUpload(file) {
 
 async function upload(file, kind, dependencies = {}) {
   const uploadMedia = dependencies.uploadMedia || whatsappService.uploadMedia;
-  const transcodeAudio = dependencies.transcodeAudio || transcodeWebmToOgg;
+  const transcodeAudio = dependencies.transcodeAudio || transcodeAudioToMp3;
   let preparedFile = file;
   let temporaryConversion;
   try {
     let metadata = await validateUpload(file, kind);
-    if (kind === "audio" && metadata.mimeType === "audio/webm") {
+    if (kind === "audio" && ["audio/webm", "audio/ogg"].includes(metadata.mimeType)) {
       preparedFile = await transcodeAudio(file);
       temporaryConversion = preparedFile;
       metadata = await validateUpload(preparedFile, kind);
@@ -110,4 +109,4 @@ async function upload(file, kind, dependencies = {}) {
   }
 }
 
-module.exports = { safeFilename, sniffMime, validateUpload, cleanupUpload, transcodeWebmToOgg, upload };
+module.exports = { safeFilename, sniffMime, validateUpload, cleanupUpload, transcodeAudioToMp3, upload };
