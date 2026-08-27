@@ -123,6 +123,9 @@ async function inboundReplyContext(message, conversationId, db) {
 async function processStatus(status, db = prisma) {
   const mapped = STATUS_MAP[status?.status];
   if (!status?.id || !mapped) return { ignored: true };
+  const failureDetails = mapped === "FAILED" && Array.isArray(status.errors)
+    ? status.errors
+    : undefined;
   const existing = await messageRepository.findByWamid(status.id, db);
   if (!existing) return { ignored: true, reason: "message_not_found" };
   const result = await db.$transaction(async (tx) => {
@@ -139,6 +142,7 @@ async function processStatus(status, db = prisma) {
     messageId: updated.id,
     wamid: updated.wamid,
     status: updated.status,
+    ...(failureDetails ? { failureDetails } : {}),
   });
   if (result.conversation) {
     const conversationDto = toConversationDto(result.conversation);

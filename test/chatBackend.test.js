@@ -49,6 +49,30 @@ test("atualiza status de mensagem pelo wamid", async () => {
   assert.equal(updated.status, "READ");
 });
 
+test("encaminha detalhes da falha de entrega informados pela Meta", async () => {
+  const db = createFakePrisma();
+  await messageService.processInboundMessage(inbound(), { db });
+  const originalEmit = socket.emit;
+  let emitted;
+  socket.emit = (event, payload) => {
+    if (event === "message:status") emitted = payload;
+  };
+  try {
+    await messageService.processStatus({
+      id: "wamid.1",
+      status: "failed",
+      errors: [{ code: 131053, title: "Media upload error", error_data: { details: "Audio format rejected" } }],
+    }, db);
+    assert.deepEqual(emitted.failureDetails, [{
+      code: 131053,
+      title: "Media upload error",
+      error_data: { details: "Audio format rejected" },
+    }]);
+  } finally {
+    socket.emit = originalEmit;
+  }
+});
+
 test("aceita payload de tipo desconhecido sem falhar", async () => {
   const db = createFakePrisma();
   const result = await messageService.processInboundMessage(inbound("wamid.unknown", undefined, "future_type"), { db });

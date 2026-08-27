@@ -91,6 +91,7 @@ async function processWebhookPayload(payload, dependencies = {}) {
           status: status?.status || null,
           recipientId: status?.recipient_id || null,
           statusTimestamp: status?.timestamp || null,
+          errors: Array.isArray(status?.errors) ? status.errors : [],
         });
         try {
           if (status?.type === "call") await callsApi.processCallStatus({ status, phoneNumberId });
