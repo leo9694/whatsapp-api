@@ -12,6 +12,7 @@ const statusRoutes = require("./routes/status.routes");
 const templateRoutes = require("./routes/template.routes");
 const mediaRoutes = require("./routes/media.routes");
 const callRoutes = require("./routes/call.routes");
+const whatsappChannelRoutes = require("./routes/whatsappChannel.routes");
 const logger = require("./utils/logger");
 const webhookRequestLogger = require("./middleware/webhookRequestLogger");
 const authenticateRequest = require("./middleware/authenticateRequest");
@@ -44,6 +45,7 @@ app.use(statusRoutes);
 app.use(templateRoutes);
 app.use(mediaRoutes);
 app.use(callRoutes);
+app.use(whatsappChannelRoutes);
 
 app.use(errorHandler);
 

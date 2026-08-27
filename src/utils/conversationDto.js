@@ -1,4 +1,5 @@
 const SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const { toChannelDto } = require("./channelDto");
 
 function iso(value) {
   if (!value) return null;
@@ -48,7 +49,8 @@ function toConversationDto(conversation, options = {}) {
     canSendFreeform: serviceWindow.canSendFreeform,
     canSendFreeText: serviceWindow.canSendFreeform,
     requiresTemplate: serviceWindow.requiresTemplate,
-    phoneNumberId: conversation.phoneNumberId || null,
+    phoneNumberId: conversation.channel?.phoneNumberId || conversation.phoneNumberId || null,
+    channel: toChannelDto(conversation.channel),
     assignment: conversation.assignedUserId ? {
       userId: String(conversation.assignedUserId),
       userName: conversation.assignedUserName || null,

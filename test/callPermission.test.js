@@ -186,6 +186,7 @@ test("controller reconhece o webhook oficial no campo messages", async () => {
       contacts: [{ wa_id: WA_ID }], messages: [permissionWebhook()],
     } }] }],
   }, {
+    channelService: { resolveInbound: async () => ({ id: 5, phoneNumberId: PHONE_ID, isActive: true }) },
     callService: {
       isCallPermissionReply: permissionService.isPermissionReply,
       processCallPermission: async (value) => received.push(["permission", value]),

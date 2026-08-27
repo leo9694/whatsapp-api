@@ -3,6 +3,7 @@ function iso(value) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
+const { toChannelDto } = require("./channelDto");
 
 function toCallDto(call) {
   if (!call) return call;
@@ -12,6 +13,7 @@ function toCallDto(call) {
     conversationId: call.conversationId || null,
     contactId: call.contactId || null,
     phoneNumberId: call.phoneNumberId,
+    channel: toChannelDto(call.channel || call.conversation?.channel),
     direction: call.direction,
     status: call.status,
     remotePhone: call.remotePhone || null,

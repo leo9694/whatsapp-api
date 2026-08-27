@@ -6,6 +6,7 @@ const socket = require("../sockets/socket");
 const logger = require("../utils/logger");
 const { toMessageDto } = require("../utils/messageDto");
 const { toConversationDto } = require("../utils/conversationDto");
+const channelService = require("./whatsappChannel.service");
 
 const MEDIA_TYPES = new Set(["image", "document", "audio", "video", "sticker"]);
 const STATUS_MAP = { sent: "SENT", delivered: "DELIVERED", read: "READ", failed: "FAILED" };
@@ -48,7 +49,7 @@ function extractContent(message) {
   };
 }
 
-async function processInboundMessage({ message, contacts = [], phoneNumberId }, dependencies = {}) {
+async function processInboundMessage({ message, contacts = [], phoneNumberId, channel }, dependencies = {}) {
   const db = dependencies.db || prisma;
   const waId = message?.from;
   if (!waId) {
@@ -63,17 +64,24 @@ async function processInboundMessage({ message, contacts = [], phoneNumberId }, 
   const profileName = contactPayload?.profile?.name || null;
   const messageTimestamp = parseTimestamp(message.timestamp);
   const content = extractContent(message);
+  const resolvedChannel = channel || (phoneNumberId
+    ? await channelService.resolveInbound(phoneNumberId, db)
+    : await channelService.resolveSelection({}, db));
+  if (!resolvedChannel?.isActive) {
+    logger.warn("inbound_message_unknown_channel", { messageId: message?.id || null, phoneNumberId: phoneNumberId || null });
+    return { ignored: true, reason: "unknown_channel" };
+  }
 
   try {
     const result = await db.$transaction(async (tx) => {
       const contact = await contactRepository.upsertByWaId({ waId, phone: waId, profileName }, tx);
-      let conversation = await conversationRepository.findOpenByContactId(contact.id, tx);
+      let conversation = await conversationRepository.findOpenByContactAndChannel(contact.id, resolvedChannel.id, tx);
       let isNewConversation = false;
       if (!conversation) {
-        conversation = await conversationRepository.createForContact(contact.id, tx, phoneNumberId);
+        conversation = await conversationRepository.createForContact(
+          contact.id, tx, resolvedChannel.phoneNumberId, resolvedChannel.id,
+        );
         isNewConversation = true;
-      } else if (phoneNumberId && conversation.phoneNumberId !== phoneNumberId) {
-        conversation = await conversationRepository.updatePhoneNumberId(conversation.id, phoneNumberId, tx);
       }
       const createdMessage = await messageRepository.create({
         wamid: message.id || null,
@@ -90,7 +98,11 @@ async function processInboundMessage({ message, contacts = [], phoneNumberId }, 
 
     const conversationDto = toConversationDto(result.conversation);
     if (result.isNewConversation) socket.emit("conversation:new", { conversation: conversationDto });
-    socket.emit("message:new", { conversationId: result.conversation.id, message: toMessageDto(result.message) });
+    socket.emit("message:new", {
+      conversationId: result.conversation.id,
+      message: toMessageDto(result.message),
+      channel: conversationDto.channel,
+    });
     socket.emit("conversation:updated", {
       ...conversationDto,
       conversationId: conversationDto.id,
@@ -120,7 +132,7 @@ async function inboundReplyContext(message, conversationId, db) {
   };
 }
 
-async function processStatus(status, db = prisma) {
+async function processStatus(status, db = prisma, channel) {
   const mapped = STATUS_MAP[status?.status];
   if (!status?.id || !mapped) return { ignored: true };
   const failureDetails = mapped === "FAILED" && Array.isArray(status.errors)
@@ -142,6 +154,7 @@ async function processStatus(status, db = prisma) {
     messageId: updated.id,
     wamid: updated.wamid,
     status: updated.status,
+    channel: toConversationDto(result.conversation).channel,
     ...(failureDetails ? { failureDetails } : {}),
   });
   if (result.conversation) {

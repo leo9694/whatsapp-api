@@ -12,6 +12,7 @@ const mediaGateway = require("./callMediaGateway.service");
 const presence = require("./callPresence.service");
 const transferService = require("./callTransfer.service");
 const permissionService = require("./callPermission.service");
+const channelService = require("./whatsappChannel.service");
 const { toCallDto } = require("../utils/callDto");
 const { toConversationDto } = require("../utils/conversationDto");
 
@@ -72,7 +73,7 @@ function emitCall(call, { incoming = false, session } = {}) {
   }
 }
 
-async function associateCall(call, contacts, phoneNumberId, db) {
+async function associateCall(call, contacts, phoneNumberId, channel, db) {
   const callDirection = direction(call?.direction);
   const phone = remotePhone(call, contacts, callDirection);
   if (!phone) return { contact: null, conversation: null, remotePhone: null };
@@ -82,15 +83,16 @@ async function associateCall(call, contacts, phoneNumberId, db) {
     phone,
     profileName: profile?.profile?.name || null,
   }, db);
-  let conversation = await conversationRepository.findOpenByContactId(contact.id, db);
-  if (!conversation) conversation = await conversationRepository.createForContact(contact.id, db, phoneNumberId);
-  else if (phoneNumberId && conversation.phoneNumberId !== phoneNumberId) {
-    conversation = await conversationRepository.updatePhoneNumberId(conversation.id, phoneNumberId, db);
-  }
-  return { contact, conversation, remotePhone: phone };
+  const resolvedChannel = channel || await channelService.resolveInbound(phoneNumberId, db);
+  if (!resolvedChannel?.isActive) return { contact, conversation: null, channel: null, remotePhone: phone };
+  let conversation = await conversationRepository.findOpenByContactAndChannel(contact.id, resolvedChannel.id, db);
+  if (!conversation) conversation = await conversationRepository.createForContact(
+    contact.id, db, resolvedChannel.phoneNumberId, resolvedChannel.id,
+  );
+  return { contact, conversation, channel: resolvedChannel, remotePhone: phone };
 }
 
-async function processCallEvent({ call, contacts = [], phoneNumberId, errors = [] }, dependencies = {}) {
+async function processCallEvent({ call, contacts = [], phoneNumberId, channel, errors = [] }, dependencies = {}) {
   const db = dependencies.db || prisma;
   if (!call?.id || !phoneNumberId) return { ignored: true, reason: "missing_call_identity" };
   if (!["connect", "terminate"].includes(call.event)) return { ignored: true, reason: "unsupported_call_event" };
@@ -105,9 +107,11 @@ async function processCallEvent({ call, contacts = [], phoneNumberId, errors = [
   let saved;
   if (call.event === "connect") {
     const callDirection = direction(call.direction);
-    const association = existing || await db.$transaction((tx) => associateCall(call, contacts, phoneNumberId, tx));
+    const association = existing || await db.$transaction((tx) => associateCall(call, contacts, phoneNumberId, channel, tx));
+    if (!existing && !association.channel) return { ignored: true, reason: "unknown_channel" };
     const data = {
       phoneNumberId,
+      channelId: existing?.channelId || association.channel?.id,
       direction: callDirection,
       status: callDirection === "INBOUND" ? "RINGING" : "CONNECTING",
       remotePhone: existing?.remotePhone || association.remotePhone,
@@ -141,7 +145,8 @@ async function processCallEvent({ call, contacts = [], phoneNumberId, errors = [
     }
   } else {
     const callDirection = existing?.direction || direction(call.direction);
-    const association = existing || await db.$transaction((tx) => associateCall(call, contacts, phoneNumberId, tx));
+    const association = existing || await db.$transaction((tx) => associateCall(call, contacts, phoneNumberId, channel, tx));
+    if (!existing && !association.channel) return { ignored: true, reason: "unknown_channel" };
     const metaStatus = String(call.status || "").toUpperCase();
     const answeredAt = call.start_time ? parseTimestamp(call.start_time) : existing?.answeredAt || null;
     const endedAt = call.end_time ? parseTimestamp(call.end_time) : eventAt;
@@ -152,6 +157,7 @@ async function processCallEvent({ call, contacts = [], phoneNumberId, errors = [
     else status = answeredAt ? "ENDED" : "MISSED";
     const data = {
       phoneNumberId,
+      channelId: existing?.channelId || association.channel?.id,
       direction: callDirection,
       status,
       remotePhone: existing?.remotePhone || association.remotePhone,
@@ -343,7 +349,9 @@ async function conversationForCalling(conversationId, agent, db) {
   if (conversation.assignedUserId && String(conversation.assignedUserId) !== String(agent.id) && !agent.director) {
     throw new AppError(`Conversa em atendimento por ${conversation.assignedUserName || "outro atendente"}.`, 403);
   }
-  const phoneNumberId = conversation.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID?.trim();
+  const phoneNumberId = conversation.channel?.phoneNumberId
+    || conversation.phoneNumberId
+    || process.env.WHATSAPP_PHONE_NUMBER_ID?.trim();
   if (!phoneNumberId) throw new AppError("Número empresarial não associado à conversa.", 409);
   return { conversation, phoneNumberId };
 }
@@ -383,6 +391,7 @@ async function requestPermission(conversationId, input, dependencies = {}) {
   logger.info("[CALL_PERMISSION] requested", {
     conversationId: conversation.id,
     contactId: conversation.contactId,
+    channelId: conversation.channelId,
     phoneNumberId,
     agentId: String(input.agent.id),
   });
@@ -436,6 +445,7 @@ async function initiate(conversationId, input, dependencies = {}) {
     metaCallId: callId,
     conversationId: conversation.id,
     contactId: conversation.contactId,
+    channelId: conversation.channelId,
     phoneNumberId,
     direction: "OUTBOUND",
     status: "CONNECTING",

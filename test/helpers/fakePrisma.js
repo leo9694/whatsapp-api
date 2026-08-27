@@ -10,6 +10,21 @@ function createFakePrisma() {
   const state = {
     contacts: [], conversations: [], messages: [], assignments: [], calls: [],
     transfers: [], permissions: [],
+    channels: [
+      {
+        id: 1, phoneNumberId: "1226938830493899", displayPhoneNumber: "+55 65 4042-0707",
+        displayName: "Norte Sul Sementes", isActive: true, isDefault: true,
+      },
+      {
+        id: 2, phoneNumberId: "1272418099287669", displayPhoneNumber: "+55 66 9215-1618",
+        displayName: "Norte Sul | Atendimento Comercial", isActive: true, isDefault: false,
+      },
+      ...["phone-number-id-2", "phone-number-id-channel-B", "phone-outbound-2", "phone-transfer"]
+        .map((phoneNumberId, index) => ({
+          id: index + 3, phoneNumberId, displayPhoneNumber: phoneNumberId,
+          displayName: `Canal de teste ${index + 1}`, isActive: true, isDefault: false,
+        })),
+    ],
   };
   const next = {
     contact: 1, conversation: 1, message: 1, assignment: 1, call: 1,
@@ -20,6 +35,21 @@ function createFakePrisma() {
   const db = {
     state,
     $transaction: (callback) => callback(db),
+    whatsAppChannel: {
+      async findUnique({ where }) {
+        const item = state.channels.find((channel) => channel.id === where.id
+          || channel.phoneNumberId === where.phoneNumberId);
+        return item ? { ...item } : null;
+      },
+      async findFirst({ where }) {
+        const item = state.channels.find((channel) => (!where.isDefault || channel.isDefault)
+          && (!where.isActive || channel.isActive));
+        return item ? { ...item } : null;
+      },
+      async findMany({ where = {} }) {
+        return state.channels.filter((channel) => !where.isActive || channel.isActive).map((channel) => ({ ...channel }));
+      },
+    },
     contact: {
       async findUnique({ where }) {
         const item = state.contacts.find((contact) => contact.waId === where.waId || contact.id === where.id);
@@ -36,29 +66,39 @@ function createFakePrisma() {
       },
     },
     conversation: {
-      async findFirst({ where }) {
+      async findFirst({ where, include }) {
         const items = state.conversations.filter((item) =>
-          item.contactId === where.contactId && (!where.status || item.status === where.status));
-        return items.length ? { ...items.at(-1) } : null;
+          item.contactId === where.contactId && (!where.channelId || item.channelId === where.channelId)
+          && (!where.status || item.status === where.status));
+        if (!items.length) return null;
+        const result = { ...items.at(-1) };
+        if (include?.contact) result.contact = { ...state.contacts.find((contact) => contact.id === result.contactId) };
+        if (include?.channel) result.channel = { ...state.channels.find((channel) => channel.id === result.channelId) };
+        return result;
       },
-      async create({ data }) {
+      async create({ data, include }) {
+        const inferredChannel = state.channels.find((channel) => channel.phoneNumberId === data.phoneNumberId);
         const item = {
           id: next.conversation++, status: "OPEN", assignedUserId: null, assignedUserName: null,
           assignedAt: null, unreadCount: 0,
-          phoneNumberId: null,
+          phoneNumberId: null, channelId: data.channelId || inferredChannel?.id || 1,
           lastMessageAt: null, conversationInitiated: false, conversationInitiatedAt: null,
           initialTemplateWamid: null, initialTemplateStatus: null, lastInboundAt: null,
           customerServiceWindowOpenedAt: null, customerServiceWindowExpiresAt: null,
           waitingForCustomerReply: false, createdAt: now(), updatedAt: now(), ...data,
         };
         state.conversations.push(item);
-        return { ...item };
+        const result = { ...item };
+        if (include?.contact) result.contact = { ...state.contacts.find((contact) => contact.id === item.contactId) };
+        if (include?.channel) result.channel = { ...state.channels.find((channel) => channel.id === item.channelId) };
+        return result;
       },
       async findUnique({ where, include }) {
         const item = state.conversations.find((conversation) => conversation.id === where.id);
         if (!item) return null;
         const result = { ...item };
         if (include?.contact) result.contact = { ...state.contacts.find((contact) => contact.id === item.contactId) };
+        if (include?.channel) result.channel = { ...state.channels.find((channel) => channel.id === item.channelId) };
         return result;
       },
       async update({ where, data, include }) {
@@ -71,6 +111,7 @@ function createFakePrisma() {
         item.updatedAt = now();
         const result = { ...item };
         if (include?.contact) result.contact = { ...state.contacts.find((contact) => contact.id === item.contactId) };
+        if (include?.channel) result.channel = { ...state.channels.find((channel) => channel.id === item.channelId) };
         return result;
       },
       async updateMany({ where, data }) {
@@ -89,6 +130,11 @@ function createFakePrisma() {
       async findMany({ where = {}, skip = 0, take = 30 }) {
         let items = state.conversations.filter((item) => {
           if (where.status && item.status !== where.status) return false;
+          if (where.channelId && item.channelId !== where.channelId) return false;
+          if (where.channel?.phoneNumberId) {
+            const channel = state.channels.find((candidate) => candidate.id === item.channelId);
+            if (channel?.phoneNumberId !== where.channel.phoneNumberId) return false;
+          }
           if (Object.prototype.hasOwnProperty.call(where, "assignedUserId") && item.assignedUserId !== where.assignedUserId) return false;
           const contact = state.contacts.find((candidate) => candidate.id === item.contactId);
           const search = where.contact?.OR?.[0]?.name?.contains;
@@ -102,6 +148,7 @@ function createFakePrisma() {
           return {
             ...item,
             contact: { ...state.contacts.find((contact) => contact.id === item.contactId) },
+            channel: { ...state.channels.find((channel) => channel.id === item.channelId) },
             messages: messages.slice(0, 1).map((message) => ({ ...message })),
           };
         });
@@ -109,6 +156,11 @@ function createFakePrisma() {
       async count({ where = {} }) {
         return state.conversations.filter((item) => {
           if (where.status && item.status !== where.status) return false;
+          if (where.channelId && item.channelId !== where.channelId) return false;
+          if (where.channel?.phoneNumberId) {
+            const channel = state.channels.find((candidate) => candidate.id === item.channelId);
+            if (channel?.phoneNumberId !== where.channel.phoneNumberId) return false;
+          }
           if (Object.prototype.hasOwnProperty.call(where, "assignedUserId") && item.assignedUserId !== where.assignedUserId) return false;
           const contact = state.contacts.find((candidate) => candidate.id === item.contactId);
           const search = where.contact?.OR?.[0]?.name?.contains;
@@ -164,6 +216,7 @@ function createFakePrisma() {
           ? { ...state.contacts.find((contact) => contact.id === item.contactId) } : null;
         if (include?.conversation) result.conversation = item.conversationId
           ? { ...state.conversations.find((conversation) => conversation.id === item.conversationId) } : null;
+        if (include?.channel) result.channel = { ...state.channels.find((channel) => channel.id === item.channelId) };
         if (include?.transfers) result.transfers = state.transfers
           .filter((transfer) => transfer.callId === item.id).map((transfer) => ({ ...transfer }));
         return result;

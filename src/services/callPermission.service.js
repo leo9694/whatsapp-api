@@ -4,6 +4,8 @@ const conversationRepository = require("../repositories/conversation.repository"
 const permissionRepository = require("../repositories/callPermission.repository");
 const socket = require("../sockets/socket");
 const logger = require("../utils/logger");
+const channelService = require("./whatsappChannel.service");
+const { toChannelDto } = require("../utils/channelDto");
 
 function metaDate(value) {
   const seconds = Number(value);
@@ -59,11 +61,12 @@ function toDto(permission, now = new Date()) {
   };
 }
 
-function socketPayload(permission) {
+function socketPayload(permission, conversation) {
   return {
     conversationId: permission.conversationId,
     contactId: permission.contactId,
     phoneNumberId: permission.phoneNumberId,
+    channel: toChannelDto(permission.channel || conversation?.channel),
     ...toDto(permission),
   };
 }
@@ -71,7 +74,7 @@ function socketPayload(permission) {
 function emitUpdated(permission, conversation, dependencies = {}) {
   const socketServer = dependencies.socket || socket;
   const targets = [conversation?.assignedUserId, permission.requestedByAgentId].filter(Boolean);
-  socketServer.emitToAgents(targets, "call:permission:updated", socketPayload(permission));
+  socketServer.emitToAgents(targets, "call:permission:updated", socketPayload(permission, conversation));
   logger.info("[CALL_PERMISSION] socket emitted", {
     conversationId: permission.conversationId,
     status: permission.status,
@@ -86,6 +89,7 @@ async function syncFromMeta({ conversation, phoneNumberId, meta, agent }, depend
   const now = new Date();
   const permission = await permissionRepository.upsert(conversation.id, phoneNumberId, {
     contactId: conversation.contactId,
+    channelId: conversation.channelId,
     ...normalized,
     ...(agent ? { requestedByAgentId: String(agent.id), requestedByAgentName: agent.name } : {}),
     ...(normalized.status === "GRANTED" && !existing?.grantedAt ? { grantedAt: now } : {}),
@@ -98,6 +102,7 @@ async function markRequested({ conversation, phoneNumberId, agent, messageId }, 
   const db = dependencies.db || prisma;
   const permission = await permissionRepository.upsert(conversation.id, phoneNumberId, {
     contactId: conversation.contactId,
+    channelId: conversation.channelId,
     status: "PENDING",
     canStartCall: false,
     isPermanent: false,
@@ -123,21 +128,22 @@ function isPermissionReply(message) {
     && Boolean(message?.interactive?.call_permission_reply);
 }
 
-async function resolveConversation({ message, contacts, phoneNumberId }, db) {
+async function resolveConversation({ message, contacts, phoneNumberId, channel }, db) {
   const waId = String(message.from || "");
   const profile = contacts.find((item) => String(item?.wa_id || "") === waId) || contacts[0];
   const contact = await contactRepository.upsertByWaId({
     waId, phone: waId, profileName: profile?.profile?.name || null,
   }, db);
-  let conversation = await conversationRepository.findOpenByContactId(contact.id, db);
-  if (!conversation) conversation = await conversationRepository.createForContact(contact.id, db, phoneNumberId);
-  else if (phoneNumberId && conversation.phoneNumberId !== phoneNumberId) {
-    conversation = await conversationRepository.updatePhoneNumberId(conversation.id, phoneNumberId, db);
-  }
+  const resolvedChannel = channel || await channelService.resolveInbound(phoneNumberId, db);
+  if (!resolvedChannel?.isActive) return { contact, conversation: null };
+  let conversation = await conversationRepository.findOpenByContactAndChannel(contact.id, resolvedChannel.id, db);
+  if (!conversation) conversation = await conversationRepository.createForContact(
+    contact.id, db, resolvedChannel.phoneNumberId, resolvedChannel.id,
+  );
   return { contact, conversation };
 }
 
-async function processWebhook({ message, contacts = [], phoneNumberId }, dependencies = {}) {
+async function processWebhook({ message, contacts = [], phoneNumberId, channel }, dependencies = {}) {
   if (!isPermissionReply(message) || !message.from || !phoneNumberId) {
     return { ignored: true, reason: "not_call_permission_reply" };
   }
@@ -151,7 +157,8 @@ async function processWebhook({ message, contacts = [], phoneNumberId }, depende
     response: reply.response || null,
     responseSource: reply.response_source || null,
   });
-  const { conversation } = await resolveConversation({ message, contacts, phoneNumberId }, db);
+  const { conversation } = await resolveConversation({ message, contacts, phoneNumberId, channel }, db);
+  if (!conversation) return { ignored: true, reason: "unknown_channel" };
   const existing = await permissionRepository.find(conversation.id, phoneNumberId, db);
   const eventAt = metaDate(message.timestamp) || new Date();
   const accepted = reply.response === "accept";
@@ -162,6 +169,7 @@ async function processWebhook({ message, contacts = [], phoneNumberId }, depende
   try {
     permission = await permissionRepository.upsert(conversation.id, phoneNumberId, {
       contactId: conversation.contactId,
+      channelId: conversation.channelId,
       status,
       canStartCall: accepted && (!expiresAt || expiresAt > eventAt),
       isPermanent: reply.is_permanent === true,

@@ -72,9 +72,27 @@ model Contact {
   callPermissions CallPermission[]
 }
 
+model WhatsAppChannel {
+  id                 Int              @id @default(autoincrement())
+  phoneNumberId      String           @unique
+  displayPhoneNumber String
+  displayName        String
+  wabaId             String?
+  isActive           Boolean          @default(true)
+  isDefault          Boolean          @default(false)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  conversations      Conversation[]
+  calls              Call[]
+  callPermissions    CallPermission[]
+
+  @@index([isActive, isDefault])
+}
+
 model Conversation {
   id                             Int                      @id @default(autoincrement())
   contactId                      Int
+  channelId                      Int
   status                         ConversationStatus       @default(OPEN)
   assignedUserId                 String?
   assignedUserName               String?
@@ -93,12 +111,15 @@ model Conversation {
   createdAt                      DateTime                 @default(now())
   updatedAt                      DateTime                 @updatedAt
   contact                        Contact                  @relation(fields: [contactId], references: [id], onDelete: Restrict)
+  channel                        WhatsAppChannel          @relation(fields: [channelId], references: [id], onDelete: Restrict)
   messages                       Message[]
   assignments                    ConversationAssignment[]
   calls                          Call[]
   callPermissions                CallPermission[]
 
   @@index([contactId])
+  @@index([contactId, channelId, status])
+  @@index([channelId, lastMessageAt])
   @@index([lastMessageAt])
   @@index([status, lastMessageAt])
   @@index([initialTemplateWamid])
@@ -109,6 +130,7 @@ model CallPermission {
   id                   Int                  @id @default(autoincrement())
   conversationId       Int
   contactId            Int
+  channelId            Int
   phoneNumberId        String
   status               CallPermissionStatus
   canStartCall         Boolean              @default(false)
@@ -128,9 +150,11 @@ model CallPermission {
   updatedAt            DateTime             @updatedAt
   conversation         Conversation         @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   contact              Contact              @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  channel              WhatsAppChannel      @relation(fields: [channelId], references: [id], onDelete: Restrict)
 
   @@unique([conversationId, phoneNumberId])
   @@index([contactId, phoneNumberId])
+  @@index([channelId, status])
   @@index([status, expiresAt])
 }
 
@@ -139,6 +163,7 @@ model Call {
   metaCallId      String        @unique
   conversationId  Int?
   contactId       Int?
+  channelId       Int
   phoneNumberId   String
   direction       CallDirection
   status          CallStatus
@@ -155,11 +180,13 @@ model Call {
   updatedAt       DateTime      @updatedAt
   conversation    Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
   contact         Contact?      @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  channel         WhatsAppChannel @relation(fields: [channelId], references: [id], onDelete: Restrict)
   transfers       CallTransfer[]
 
   @@index([conversationId, createdAt])
   @@index([contactId, createdAt])
   @@index([phoneNumberId, status])
+  @@index([channelId, status])
   @@index([direction, status, createdAt])
   @@index([currentAgentId, status])
 }

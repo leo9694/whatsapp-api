@@ -47,9 +47,13 @@ async function graphRequest(url, options = {}) {
   return { data, status: response.status };
 }
 
-async function sendMessage(to, message) {
-  const { phoneNumberId, apiVersion } = getConfiguration();
-  const url = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
+function resolvePhoneNumberId(phoneNumberId) {
+  return String(phoneNumberId || "").trim() || getConfiguration().phoneNumberId;
+}
+
+async function sendMessage(to, message, phoneNumberId) {
+  const resolvedPhoneNumberId = resolvePhoneNumberId(phoneNumberId);
+  const url = `https://graph.facebook.com/${getApiVersion()}/${resolvedPhoneNumberId}/messages`;
   return graphRequest(url, {
     method: "POST",
     body: JSON.stringify({ messaging_product: "whatsapp", to, ...message }),
@@ -127,17 +131,18 @@ async function requestCallPermission(phoneNumberId, to, body) {
   })).data;
 }
 
-async function sendTextMessage(to, text, replyToMessageId = "") {
+async function sendTextMessage(to, text, replyToMessageId = "", phoneNumberId) {
   try {
     const { data, status } = await sendMessage(to, {
       type: "text",
       text: { body: text },
       ...(replyToMessageId ? { context: { message_id: replyToMessageId } } : {}),
-    });
+    }, phoneNumberId);
     logger.info("whatsapp_message_sent", {
       to: maskRecipient(to),
       metaHttpStatus: status,
       messageId: data.messages?.[0]?.id || null,
+      phoneNumberId: resolvePhoneNumberId(phoneNumberId),
     });
     return data;
   } catch (error) {
@@ -158,36 +163,36 @@ async function sendTextMessage(to, text, replyToMessageId = "") {
   }
 }
 
-async function sendReactionMessage(to, messageId, emoji) {
+async function sendReactionMessage(to, messageId, emoji, phoneNumberId) {
   return (await sendMessage(to, {
     type: "reaction",
     reaction: { message_id: messageId, emoji },
-  })).data;
+  }, phoneNumberId)).data;
 }
 
-async function sendImageMessage(to, mediaId, caption) {
-  return (await sendMessage(to, { type: "image", image: { id: mediaId, ...(caption ? { caption } : {}) } })).data;
+async function sendImageMessage(to, mediaId, caption, phoneNumberId) {
+  return (await sendMessage(to, { type: "image", image: { id: mediaId, ...(caption ? { caption } : {}) } }, phoneNumberId)).data;
 }
 
-async function sendDocumentMessage(to, mediaId, caption, filename) {
+async function sendDocumentMessage(to, mediaId, caption, filename, phoneNumberId) {
   return (await sendMessage(to, {
     type: "document",
     document: { id: mediaId, ...(caption ? { caption } : {}), ...(filename ? { filename } : {}) },
-  })).data;
+  }, phoneNumberId)).data;
 }
 
-async function sendAudioMessage(to, mediaId, options = {}) {
+async function sendAudioMessage(to, mediaId, options = {}, phoneNumberId) {
   return (await sendMessage(to, {
     type: "audio",
     audio: { id: mediaId, ...(options.voice === true ? { voice: true } : {}) },
-  })).data;
+  }, phoneNumberId)).data;
 }
 
-async function sendVideoMessage(to, mediaId, caption) {
-  return (await sendMessage(to, { type: "video", video: { id: mediaId, ...(caption ? { caption } : {}) } })).data;
+async function sendVideoMessage(to, mediaId, caption, phoneNumberId) {
+  return (await sendMessage(to, { type: "video", video: { id: mediaId, ...(caption ? { caption } : {}) } }, phoneNumberId)).data;
 }
 
-async function sendTemplateMessage(to, templateName, language, components = []) {
+async function sendTemplateMessage(to, templateName, language, components = [], phoneNumberId) {
   return (await sendMessage(to, {
     type: "template",
     template: {
@@ -195,12 +200,12 @@ async function sendTemplateMessage(to, templateName, language, components = []) 
       language: { code: language },
       ...(components.length ? { components } : {}),
     },
-  })).data;
+  }, phoneNumberId)).data;
 }
 
-async function markMessageAsRead(messageId) {
-  const { phoneNumberId, apiVersion } = getConfiguration();
-  const url = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
+async function markMessageAsRead(messageId, phoneNumberId) {
+  const resolvedPhoneNumberId = resolvePhoneNumberId(phoneNumberId);
+  const url = `https://graph.facebook.com/${getApiVersion()}/${resolvedPhoneNumberId}/messages`;
   return (await graphRequest(url, {
     method: "POST",
     body: JSON.stringify({ messaging_product: "whatsapp", status: "read", message_id: messageId }),
@@ -226,8 +231,8 @@ async function listMessageTemplates() {
 }
 
 async function getMediaMetadata(mediaId) {
-  const { apiVersion, phoneNumberId } = getConfiguration();
-  const url = `https://graph.facebook.com/${apiVersion}/${encodeURIComponent(mediaId)}?phone_number_id=${encodeURIComponent(phoneNumberId)}`;
+  const { apiVersion } = getConfiguration();
+  const url = `https://graph.facebook.com/${apiVersion}/${encodeURIComponent(mediaId)}`;
   return (await graphRequest(url)).data;
 }
 
@@ -253,14 +258,15 @@ async function downloadMedia(mediaId) {
   }
 }
 
-async function uploadMedia({ filePath, mimeType, filename }) {
-  const { accessToken, apiVersion, phoneNumberId } = getConfiguration();
+async function uploadMedia({ filePath, mimeType, filename, phoneNumberId }) {
+  const { accessToken, apiVersion } = getConfiguration();
+  const resolvedPhoneNumberId = resolvePhoneNumberId(phoneNumberId);
   const form = new FormData();
   form.append("messaging_product", "whatsapp");
   form.append("file", fs.createReadStream(filePath), { contentType: mimeType, filename });
   try {
     const response = await axios.post(
-      `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/media`,
+      `https://graph.facebook.com/${apiVersion}/${resolvedPhoneNumberId}/media`,
       form,
       {
         headers: { Authorization: `Bearer ${accessToken}`, ...form.getHeaders() },
@@ -297,4 +303,5 @@ module.exports = {
   requestCallPermission,
   maskRecipient,
   MetaApiError,
+  resolvePhoneNumberId,
 };

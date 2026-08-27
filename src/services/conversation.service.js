@@ -10,6 +10,7 @@ const mediaService = require("./media.service");
 const { toMessageDto } = require("../utils/messageDto");
 const contactRepository = require("../repositories/contact.repository");
 const { toConversationDto } = require("../utils/conversationDto");
+const whatsappChannelService = require("./whatsappChannel.service");
 
 function assertFreeTextWindow(conversation) {
   const dto = toConversationDto(conversation);
@@ -19,7 +20,7 @@ function assertFreeTextWindow(conversation) {
   return dto.serviceWindow;
 }
 
-async function listConversations({ page, limit, search, status, assignment = "MINE", viewerId }, db = prisma) {
+async function listConversations({ page, limit, search, status, assignment = "MINE", viewerId, channelId, phoneNumberId }, db = prisma) {
   if (assignment === "MINE" && !viewerId) throw new AppError("Identificacao do atendente ausente.", 400);
   const [data, total] = await conversationRepository.list({
     skip: (page - 1) * limit,
@@ -28,6 +29,8 @@ async function listConversations({ page, limit, search, status, assignment = "MI
     status,
     assignment,
     viewerId,
+    channelId,
+    phoneNumberId,
   }, db);
   return {
     data: data.map(({ messages, ...conversation }) => toConversationDto(conversation, {
@@ -66,22 +69,30 @@ function normalizeWhatsappNumber(value) {
   return number;
 }
 
-async function createConversation({ name, phone }, db = prisma) {
+async function createConversation({ name, phone, channelId, phoneNumberId }, db = prisma) {
   const waId = normalizeWhatsappNumber(phone);
   const result = await db.$transaction(async (tx) => {
+    const channel = await whatsappChannelService.resolveSelection({ channelId, phoneNumberId }, tx);
     const contact = await contactRepository.upsertByWaId({ waId, phone: waId, name: name || undefined }, tx);
-    let conversation = await conversationRepository.findOpenByContactId(contact.id, tx);
+    let conversation = await conversationRepository.findOpenByContactAndChannel(contact.id, channel.id, tx);
     const created = !conversation;
     if (created) conversation = await conversationRepository.createForContact(
       contact.id,
       tx,
-      process.env.WHATSAPP_PHONE_NUMBER_ID?.trim() || undefined,
+      channel.phoneNumberId,
+      channel.id,
     );
     const complete = await conversationRepository.findById(conversation.id, tx);
     return { conversation: toConversationDto(complete), contact, created };
   });
   if (result.created) socket.emit("conversation:new", { conversation: result.conversation });
   return result;
+}
+
+function conversationPhoneNumberId(conversation) {
+  return conversation.channel?.phoneNumberId
+    || conversation.phoneNumberId
+    || process.env.WHATSAPP_PHONE_NUMBER_ID?.trim();
 }
 
 async function listMessages(id, { page, limit }, db = prisma) {
@@ -118,7 +129,7 @@ async function sendText(id, text, agent, dependencies = {}) {
       direction: target.direction,
     };
   }
-  const meta = await send(conversation.contact.waId, outgoingText, replyToMessageId);
+  const meta = await send(conversation.contact.waId, outgoingText, replyToMessageId, conversationPhoneNumberId(conversation));
   const wamid = meta.messages?.[0]?.id || null;
   const now = new Date();
   const message = await persistOutbound(id, {
@@ -145,7 +156,7 @@ async function sendReaction(id, messageId, emoji, agent, dependencies = {}) {
   if (!target || String(target.conversationId) !== String(id)) {
     throw new AppError("A mensagem selecionada não pertence a esta conversa.", 404);
   }
-  const meta = await send(conversation.contact.waId, messageId, emoji);
+  const meta = await send(conversation.contact.waId, messageId, emoji, conversationPhoneNumberId(conversation));
   const now = new Date();
   const message = await persistOutbound(id, {
     wamid: meta.messages?.[0]?.id || null,
@@ -181,7 +192,7 @@ async function persistOutbound(conversationId, data, db = prisma, conversationUp
 
 function emitOutbound(conversationId, message, lastMessageAt, conversation) {
   const dto = toMessageDto(message);
-  socket.emit("message:new", { conversationId, message: dto });
+  socket.emit("message:new", { conversationId, message: dto, channel: conversation?.channel || null });
   socket.emit("conversation:updated", {
     ...(conversation || {}), conversationId, lastMessageAt, lastMessage: dto,
   });
@@ -195,7 +206,13 @@ async function sendTemplate(id, input, agent, dependencies = {}) {
   if (agent) assertAssigned(conversation, agent);
   const found = await findTemplate(input.templateName, input.language);
   if (found.template.status !== "APPROVED") throw new AppError("Somente templates aprovados podem ser enviados.", 400);
-  const meta = await send(conversation.contact.waId, input.templateName, input.language, input.components || []);
+  const meta = await send(
+    conversation.contact.waId,
+    input.templateName,
+    input.language,
+    input.components || [],
+    conversationPhoneNumberId(conversation),
+  );
   const wamid = meta.messages?.[0]?.id || null;
   if (!wamid) throw new AppError("A Meta aceitou a solicitação sem retornar o ID da mensagem.", 502);
   const now = new Date();
@@ -224,7 +241,8 @@ async function sendMedia(id, kind, file, options = {}, agent, dependencies = {})
   const conversation = await getConversation(id, db);
   if (agent) assertAssigned(conversation, agent);
   assertFreeTextWindow(conversation);
-  const uploaded = await upload(file, kind, dependencies);
+  const phoneNumberId = conversationPhoneNumberId(conversation);
+  const uploaded = await upload(file, kind, { ...dependencies, phoneNumberId });
   const senders = {
     image: dependencies.sendImageMessage || whatsappService.sendImageMessage,
     document: dependencies.sendDocumentMessage || whatsappService.sendDocumentMessage,
@@ -234,9 +252,9 @@ async function sendMedia(id, kind, file, options = {}, agent, dependencies = {})
   const send = senders[kind];
   const sendsAsVoice = kind === "audio" && Boolean(options.voice) && uploaded.mimeType === "audio/ogg";
   let meta;
-  if (kind === "document") meta = await send(conversation.contact.waId, uploaded.mediaId, options.caption, options.filename || uploaded.filename);
-  else if (kind === "audio") meta = await send(conversation.contact.waId, uploaded.mediaId, { voice: sendsAsVoice });
-  else meta = await send(conversation.contact.waId, uploaded.mediaId, options.caption);
+  if (kind === "document") meta = await send(conversation.contact.waId, uploaded.mediaId, options.caption, options.filename || uploaded.filename, phoneNumberId);
+  else if (kind === "audio") meta = await send(conversation.contact.waId, uploaded.mediaId, { voice: sendsAsVoice }, phoneNumberId);
+  else meta = await send(conversation.contact.waId, uploaded.mediaId, options.caption, phoneNumberId);
   const now = new Date();
   const message = await persistOutbound(id, {
     wamid: meta.messages?.[0]?.id || null,
@@ -258,13 +276,13 @@ async function sendMedia(id, kind, file, options = {}, agent, dependencies = {})
 async function markRead(id, dependencies = {}) {
   const db = dependencies.db || prisma;
   const markMetaRead = dependencies.markMessageAsRead || whatsappService.markMessageAsRead;
-  await getConversation(id, db);
+  const current = await getConversation(id, db);
   const latestInbound = await messageRepository.findLatestInbound(id, db);
   const conversation = await conversationRepository.markRead(id, db);
   let metaMarked = false;
   if (latestInbound?.wamid) {
     try {
-      await markMetaRead(latestInbound.wamid);
+      await markMetaRead(latestInbound.wamid, conversationPhoneNumberId(current));
       metaMarked = true;
     } catch (error) {
       logger.error("whatsapp_mark_read_failed", { conversationId: id, message: error.message });
@@ -343,4 +361,5 @@ module.exports = {
   listConversations, getConversation, createConversation, listMessages, sendText, sendReaction, sendTemplate, sendMedia,
   markRead, changeStatus, changeAssignment, deleteConversation, persistOutbound, normalizeWhatsappNumber,
   assertAssigned, assertFreeTextWindow, signedText,
+  conversationPhoneNumberId,
 };

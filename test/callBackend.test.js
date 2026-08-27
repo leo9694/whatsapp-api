@@ -99,6 +99,7 @@ test("controller do webhook reconhece calls[] e preserva o processamento de mens
       metadata: { phone_number_id: PHONE_ID }, contacts: contacts(), calls: [inboundCall()], messages: [{ id: "wamid.1", from: "556697212427" }],
     } }] }],
   }, {
+    channelService: { resolveInbound: async () => ({ id: 3, phoneNumberId: PHONE_ID, isActive: true }) },
     callService: { processCallEvent: async (value) => received.push(["call", value]) },
     messageService: {
       processInboundMessage: async (value) => received.push(["message", value]),

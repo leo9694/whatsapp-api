@@ -10,6 +10,36 @@ As rotas `/api/*` aceitam o header `X-API-Key` quando `INTERNAL_API_KEY` estiver
 
 Retorna a disponibilidade do banco, do Socket.IO e a presença da configuração do WhatsApp, sem expor segredos.
 
+## Canais WhatsApp
+
+O backend atende dois números da mesma WABA. O recurso `WhatsAppChannel` identifica o número usado por cada conversa e por todas as operações relacionadas:
+
+| Canal | `phoneNumberId` | Padrão |
+|---|---|---:|
+| Norte Sul Sementes | `1226938830493899` | Sim |
+| Norte Sul \| Atendimento Comercial | `1272418099287669` | Não |
+
+### `GET /api/whatsapp/channels`
+
+Lista apenas canais ativos, sem retornar token ou outro segredo:
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 1,
+      "phoneNumberId": "1226938830493899",
+      "displayPhoneNumber": "+55 65 4042-0707",
+      "displayName": "Norte Sul Sementes",
+      "isDefault": true
+    }
+  ]
+}
+```
+
+O webhook resolve o canal por `metadata.phone_number_id`. Eventos de IDs desconhecidos são confirmados para a Meta, registrados de forma segura e ignorados, sem contaminar conversas existentes.
+
 ## Conversas
 
 ### `POST /api/conversations`
@@ -19,9 +49,12 @@ Cria ou recupera somente o contato e uma conversa local `OPEN`. Esta operação 
 ```json
 {
   "name": "Leo teste",
-  "phone": "556696988891"
+  "phone": "556696988891",
+  "channelId": 2
 }
 ```
+
+`channelId` é opcional. Também é possível informar `phoneNumberId`; sem ambos, o canal padrão é usado. O mesmo contato pode manter uma conversa `OPEN` independente em cada canal.
 
 Retorna HTTP `201` quando cria a conversa e `200` quando reutiliza uma conversa `OPEN`:
 
@@ -44,6 +77,8 @@ Query params:
 - `limit`: 1 a 100, padrão 30.
 - `search`: nome, perfil, telefone ou WA ID.
 - `status`: `OPEN`, `CLOSED` ou `ARCHIVED`.
+- `channelId`: ID interno do canal.
+- `phoneNumberId`: ID oficial do número na Meta.
 
 ```json
 {
@@ -54,7 +89,7 @@ Query params:
 
 ### `GET /api/conversations/:id`
 
-Retorna conversa, contato e `serviceWindow`.
+Retorna conversa, contato, `serviceWindow` e o objeto `channel` com os metadados seguros do número.
 
 ### Janela de atendimento
 
@@ -134,7 +169,7 @@ Aceita `OPEN`, `CLOSED` e `ARCHIVED`.
 { "to": "5565XXXXXXXX", "text": "Mensagem" }
 ```
 
-Esse endpoint é mantido para operações técnicas. O Nginx de produção bloqueia seu acesso público; prefira o envio por `conversationId`.
+Esse endpoint é mantido para operações técnicas e continua usando `WHATSAPP_PHONE_NUMBER_ID`, o canal padrão. O Nginx de produção bloqueia seu acesso público; prefira o envio por `conversationId`, que seleciona automaticamente o canal da conversa.
 
 ## Webhook e rotas públicas
 
@@ -156,6 +191,8 @@ Eventos emitidos:
 - `message:status`
 - `conversation:read`
 - `conversation:status`
+
+Os eventos de conversa, mensagem e chamada incluem `channel` (e `phoneNumberId` onde já fazia parte do contrato), permitindo separar as duas caixas de entrada no frontend.
 
 Somente origens listadas em `FRONTEND_URLS` podem conectar a partir de navegadores.
 
@@ -249,6 +286,8 @@ Rotas:
 - `POST /api/conversations/:id/messages/audio`
 
 Os uploads são `multipart/form-data` com o campo `file`. Imagem/vídeo/documento aceitam `caption`; documento aceita `filename`; áudio aceita `voice=true|false`.
+
+Upload e envio usam automaticamente o `phoneNumberId` do canal da conversa. O frontend não precisa, e não deve, enviar token da Meta.
 
 ```js
 async function sendMedia(conversationId, kind, file, fields = {}) {
@@ -394,6 +433,7 @@ Exemplo de chamada recebida:
   "conversationId": 123,
   "contact": { "id": 10, "name": "Cliente", "phone": "5566..." },
   "phoneNumberId": "...",
+  "channel": { "id": 2, "phoneNumberId": "1272418099287669", "displayName": "Norte Sul | Atendimento Comercial" },
   "direction": "INBOUND",
   "status": "RINGING",
   "startedAt": "2026-08-24T20:00:00.000Z"
@@ -479,7 +519,7 @@ Content-Type: application/json
 
 Fora da janela de atendimento, use um template de `call_permission_request` aprovado; o endpoint livre não contorna a regra da Meta.
 
-A decisão do cliente chega no webhook oficial de `messages` como uma mensagem interativa do tipo `call_permission_reply`. Os estados `PENDING`, `GRANTED`, `DENIED`, `EXPIRED` e `REVOKED` são persistidos em `CallPermission`. A mudança é enviada ao atendente pelo evento privado `call:permission:updated`; ela apenas habilita o botão e nunca inicia uma chamada automaticamente.
+A decisão do cliente chega no webhook oficial de `messages` como uma mensagem interativa do tipo `call_permission_reply`. Os estados `PENDING`, `GRANTED`, `DENIED`, `EXPIRED` e `REVOKED` são persistidos em `CallPermission`, sempre vinculados à conversa e ao canal correto. A mudança é enviada ao atendente pelo evento privado `call:permission:updated`; ela apenas habilita o botão e nunca inicia uma chamada automaticamente.
 
 Primeiro conecte o navegador ao gateway:
 

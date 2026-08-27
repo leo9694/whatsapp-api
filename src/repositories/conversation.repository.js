@@ -1,22 +1,36 @@
 const prisma = require("../database/prisma");
 
 function findOpenByContactId(contactId, db = prisma) {
-  return db.conversation.findFirst({ where: { contactId, status: "OPEN" }, orderBy: { createdAt: "desc" } });
+  return db.conversation.findFirst({
+    where: { contactId, status: "OPEN" }, orderBy: { createdAt: "desc" }, include: { contact: true, channel: true },
+  });
 }
 
-function createForContact(contactId, db = prisma, phoneNumberId) {
-  return db.conversation.create({ data: { contactId, status: "OPEN", ...(phoneNumberId ? { phoneNumberId } : {}) } });
+function findOpenByContactAndChannel(contactId, channelId, db = prisma) {
+  return db.conversation.findFirst({
+    where: { contactId, channelId, status: "OPEN" }, orderBy: { createdAt: "desc" },
+    include: { contact: true, channel: true },
+  });
+}
+
+function createForContact(contactId, db = prisma, phoneNumberId, channelId) {
+  return db.conversation.create({
+    data: { contactId, channelId, status: "OPEN", ...(phoneNumberId ? { phoneNumberId } : {}) },
+    include: { contact: true, channel: true },
+  });
 }
 
 function findById(id, db = prisma) {
-  return db.conversation.findUnique({ where: { id }, include: { contact: true } });
+  return db.conversation.findUnique({ where: { id }, include: { contact: true, channel: true } });
 }
 
-function list({ skip, take, search, status, assignment, viewerId }, db = prisma) {
+function list({ skip, take, search, status, assignment, viewerId, channelId, phoneNumberId }, db = prisma) {
   const where = {
     ...(status ? { status } : {}),
     ...(assignment === "MINE" ? { assignedUserId: viewerId } : {}),
     ...(assignment === "UNASSIGNED" ? { assignedUserId: null } : {}),
+    ...(channelId ? { channelId } : {}),
+    ...(phoneNumberId ? { channel: { phoneNumberId } } : {}),
     ...(search
       ? {
           contact: {
@@ -39,6 +53,7 @@ function list({ skip, take, search, status, assignment, viewerId }, db = prisma)
       orderBy: [{ lastMessageAt: "desc" }, { updatedAt: "desc" }],
       include: {
         contact: true,
+        channel: true,
         messages: { take: 1, orderBy: [{ messageTimestamp: "desc" }, { createdAt: "desc" }] },
       },
     }),
@@ -47,12 +62,12 @@ function list({ skip, take, search, status, assignment, viewerId }, db = prisma)
 }
 
 function updateAssignment(id, data, db = prisma) {
-  return db.conversation.update({ where: { id }, data, include: { contact: true } });
+  return db.conversation.update({ where: { id }, data, include: { contact: true, channel: true } });
 }
 
 function updatePhoneNumberId(id, phoneNumberId, db = prisma) {
   if (!phoneNumberId) return findById(id, db);
-  return db.conversation.update({ where: { id }, data: { phoneNumberId }, include: { contact: true } });
+  return db.conversation.update({ where: { id }, data: { phoneNumberId }, include: { contact: true, channel: true } });
 }
 
 function claimIfUnassigned(id, data, db = prisma) {
@@ -75,12 +90,12 @@ function updateAfterInbound(id, lastMessageAt, db = prisma) {
       customerServiceWindowExpiresAt: windowExpiresAt,
       waitingForCustomerReply: false,
     },
-    include: { contact: true },
+    include: { contact: true, channel: true },
   });
 }
 
 function updateLastMessageAt(id, lastMessageAt, db = prisma) {
-  return db.conversation.update({ where: { id }, data: { lastMessageAt }, include: { contact: true } });
+  return db.conversation.update({ where: { id }, data: { lastMessageAt }, include: { contact: true, channel: true } });
 }
 
 function updateAfterTemplate(id, { lastMessageAt, wamid, status }, db = prisma) {
@@ -94,7 +109,7 @@ function updateAfterTemplate(id, { lastMessageAt, wamid, status }, db = prisma) 
       initialTemplateStatus: status,
       waitingForCustomerReply: true,
     },
-    include: { contact: true },
+    include: { contact: true, channel: true },
   });
 }
 
@@ -102,16 +117,16 @@ function updateInitialTemplateStatus(id, initialTemplateStatus, db = prisma) {
   return db.conversation.update({
     where: { id },
     data: { initialTemplateStatus },
-    include: { contact: true },
+    include: { contact: true, channel: true },
   });
 }
 
 function markRead(id, db = prisma) {
-  return db.conversation.update({ where: { id }, data: { unreadCount: 0 }, include: { contact: true } });
+  return db.conversation.update({ where: { id }, data: { unreadCount: 0 }, include: { contact: true, channel: true } });
 }
 
 function updateStatus(id, status, db = prisma) {
-  return db.conversation.update({ where: { id }, data: { status }, include: { contact: true } });
+  return db.conversation.update({ where: { id }, data: { status }, include: { contact: true, channel: true } });
 }
 
 function deleteById(id, db = prisma) {
@@ -119,7 +134,7 @@ function deleteById(id, db = prisma) {
 }
 
 module.exports = {
-  findOpenByContactId, deleteById,
+  findOpenByContactId, findOpenByContactAndChannel, deleteById,
   createForContact,
   findById,
   list,

@@ -101,7 +101,12 @@ async function upload(file, kind, dependencies = {}) {
       temporaryConversion = preparedFile;
       metadata = await validateUpload(preparedFile, kind);
     }
-    const result = await uploadMedia({ filePath: preparedFile.path, mimeType: metadata.mimeType, filename: metadata.filename });
+    const result = await uploadMedia({
+      filePath: preparedFile.path,
+      mimeType: metadata.mimeType,
+      filename: metadata.filename,
+      phoneNumberId: dependencies.phoneNumberId,
+    });
     if (!result?.id) throw new AppError("A Meta não retornou o ID da mídia.", 502);
     return { mediaId: result.id, ...metadata };
   } finally {

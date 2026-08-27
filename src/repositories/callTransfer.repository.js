@@ -1,7 +1,7 @@
 const prisma = require("../database/prisma");
 
 function include() {
-  return { call: { include: { contact: true, conversation: true } } };
+  return { call: { include: { contact: true, channel: true, conversation: { include: { channel: true } } } } };
 }
 
 function findById(id, db = prisma) {

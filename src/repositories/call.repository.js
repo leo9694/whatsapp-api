@@ -3,18 +3,18 @@ const prisma = require("../database/prisma");
 function findByMetaCallId(metaCallId, db = prisma) {
   return db.call.findUnique({
     where: { metaCallId },
-    include: { contact: true, conversation: true, transfers: { orderBy: { requestedAt: "asc" } } },
+    include: { contact: true, channel: true, conversation: { include: { channel: true } }, transfers: { orderBy: { requestedAt: "asc" } } },
   });
 }
 
 function create(data, db = prisma) {
-  return db.call.create({ data, include: { contact: true, conversation: true, transfers: true } });
+  return db.call.create({ data, include: { contact: true, channel: true, conversation: { include: { channel: true } }, transfers: true } });
 }
 
 function update(metaCallId, data, db = prisma) {
   return db.call.update({
     where: { metaCallId }, data,
-    include: { contact: true, conversation: true, transfers: { orderBy: { requestedAt: "asc" } } },
+    include: { contact: true, channel: true, conversation: { include: { channel: true } }, transfers: { orderBy: { requestedAt: "asc" } } },
   });
 }
 
@@ -25,7 +25,7 @@ function list({ where, skip, take }, db = prisma) {
       skip,
       take,
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      include: { contact: true, transfers: { orderBy: { requestedAt: "asc" } } },
+      include: { contact: true, channel: true, transfers: { orderBy: { requestedAt: "asc" } } },
     }),
     db.call.count({ where }),
   ]);

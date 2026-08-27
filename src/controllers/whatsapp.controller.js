@@ -1,6 +1,7 @@
 const logger = require("../utils/logger");
 const messageService = require("../services/message.service");
 const callService = require("../services/call.service");
+const channelService = require("../services/whatsappChannel.service");
 
 function verifyWebhook(req, res) {
   const mode = req.query["hub.mode"];
@@ -23,6 +24,7 @@ function verifyWebhook(req, res) {
 async function processWebhookPayload(payload, dependencies = {}) {
   const messagesApi = dependencies.messageService || messageService;
   const callsApi = dependencies.callService || callService;
+  const channelsApi = dependencies.channelService || channelService;
   logger.info("webhook_payload_received", {
     object: payload?.object || null,
     entryCount: Array.isArray(payload?.entry) ? payload.entry.length : 0,
@@ -38,6 +40,7 @@ async function processWebhookPayload(payload, dependencies = {}) {
       const messages = Array.isArray(value.messages) ? value.messages : [];
       const statuses = Array.isArray(value.statuses) ? value.statuses : [];
       const calls = Array.isArray(value.calls) ? value.calls : [];
+      const channel = phoneNumberId ? await channelsApi.resolveInbound(phoneNumberId) : null;
 
       logger.info("webhook_change", {
         object: payload?.object || null,
@@ -48,6 +51,17 @@ async function processWebhookPayload(payload, dependencies = {}) {
         statusCount: statuses.length,
         callCount: calls.length,
       });
+
+      if (!channel) {
+        logger.warn("unknown_whatsapp_channel", {
+          phoneNumberId,
+          field: change?.field || null,
+          messageCount: messages.length,
+          statusCount: statuses.length,
+          callCount: calls.length,
+        });
+        continue;
+      }
 
       for (const message of messages) {
         const contact = contacts.find((item) => item?.wa_id === message?.from) || contacts[0];
@@ -65,7 +79,7 @@ async function processWebhookPayload(payload, dependencies = {}) {
         });
         if (callsApi.isCallPermissionReply?.(message)) {
           try {
-            await callsApi.processCallPermission({ message, contacts, phoneNumberId });
+            await callsApi.processCallPermission({ message, contacts, phoneNumberId, channel });
           } catch (error) {
             logger.error("call_permission_processing_failed", {
               messageId: message?.id || null, phoneNumberId, message: error.message,
@@ -73,7 +87,7 @@ async function processWebhookPayload(payload, dependencies = {}) {
           }
         }
         try {
-          const result = await messagesApi.processInboundMessage({ message, contacts, phoneNumberId });
+          const result = await messagesApi.processInboundMessage({ message, contacts, phoneNumberId, channel });
           if (result?.duplicate) {
             logger.warn("duplicate_message_ignored", { messageId: message?.id || null, phoneNumberId });
           }
@@ -94,8 +108,8 @@ async function processWebhookPayload(payload, dependencies = {}) {
           errors: Array.isArray(status?.errors) ? status.errors : [],
         });
         try {
-          if (status?.type === "call") await callsApi.processCallStatus({ status, phoneNumberId });
-          else await messagesApi.processStatus(status);
+          if (status?.type === "call") await callsApi.processCallStatus({ status, phoneNumberId, channel });
+          else await messagesApi.processStatus(status, undefined, channel);
         } catch (error) {
           logger.error("whatsapp_status_processing_failed", { id: status?.id || null, message: error.message });
         }
@@ -115,6 +129,7 @@ async function processWebhookPayload(payload, dependencies = {}) {
             call,
             contacts,
             phoneNumberId,
+            channel,
             errors: Array.isArray(value.errors) ? value.errors : [],
           });
         } catch (error) {

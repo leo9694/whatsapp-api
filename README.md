@@ -91,11 +91,11 @@ npm run prisma:migrate:deploy
 
 Em produção, use migrations versionadas com `prisma migrate deploy`; não substitua esse fluxo por `prisma db push`.
 
-O backend também oferece consulta/preview de templates aprovados, envio de templates por conversa, upload de imagens, documentos, vídeos e áudios, além de proxy autenticado para mídias recebidas. Consulte exemplos completos em [`docs/API.md`](docs/API.md).
+O backend trabalha simultaneamente com os dois números oficiais por meio de `WhatsAppChannel`. Cada conversa pertence a um canal, e mensagens, templates, mídias, permissões e chamadas outbound usam o `phone_number_id` desse canal. O número `1226938830493899` permanece default e `WHATSAPP_PHONE_NUMBER_ID` continua sendo apenas o fallback legado. Consulte canais em `GET /api/whatsapp/channels` e exemplos completos em [`docs/API.md`](docs/API.md).
 
 ## WhatsApp Calling
 
-O backend processa o campo oficial `calls` no mesmo webhook existente, mantém histórico no PostgreSQL e oferece sinalização segura entre navegador e Meta para chamadas WebRTC. Não usa SIP, não persiste SDP e nunca expõe o token da Meta ao frontend.
+O backend processa o campo oficial `calls` no mesmo webhook existente, identifica o canal por `metadata.phone_number_id`, mantém histórico no PostgreSQL e oferece sinalização segura entre navegador e Meta para chamadas WebRTC. Não usa SIP, não persiste SDP e nunca expõe o token da Meta ao frontend.
 
 Fluxos disponíveis:
 
