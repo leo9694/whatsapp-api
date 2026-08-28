@@ -4,7 +4,8 @@ const repository = require("../repositories/whatsappChannel.repository");
 const { toChannelDto } = require("../utils/channelDto");
 const whatsappService = require("./whatsapp.service");
 
-const PROFILE_PICTURE_TTL_MS = 60 * 60 * 1000;
+// Permite refletir trocas feitas no Perfil Comercial da Meta sem consultas a cada tela.
+const PROFILE_PICTURE_TTL_MS = 5 * 60 * 1000;
 const profilePictures = new Map();
 
 async function getProfilePicture(channel, service = whatsappService, cache = profilePictures) {
