@@ -5,6 +5,7 @@ function toChannelDto(channel) {
     phoneNumberId: channel.phoneNumberId,
     displayPhoneNumber: channel.displayPhoneNumber,
     displayName: channel.displayName,
+    profilePictureUrl: channel.profilePictureUrl || null,
     isDefault: channel.isDefault === true,
     isActive: channel.isActive === true,
   };

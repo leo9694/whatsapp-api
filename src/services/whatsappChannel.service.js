@@ -2,9 +2,36 @@ const prisma = require("../database/prisma");
 const AppError = require("../utils/AppError");
 const repository = require("../repositories/whatsappChannel.repository");
 const { toChannelDto } = require("../utils/channelDto");
+const whatsappService = require("./whatsapp.service");
 
-async function listChannels(db = prisma) {
-  return { data: (await repository.listActive(db)).map(toChannelDto) };
+const PROFILE_PICTURE_TTL_MS = 60 * 60 * 1000;
+const profilePictures = new Map();
+
+async function getProfilePicture(channel, service = whatsappService, cache = profilePictures) {
+  const key = String(channel?.phoneNumberId || "");
+  const cached = cache.get(key);
+  if (cached && Date.now() - cached.updatedAt < PROFILE_PICTURE_TTL_MS) return cached.url;
+  try {
+    const url = await service.getBusinessProfilePicture(key);
+    cache.set(key, { url: url || null, updatedAt: Date.now() });
+    return url || null;
+  } catch {
+    // A listagem dos canais deve continuar disponível se a Meta não retornar a foto.
+    cache.set(key, { url: null, updatedAt: Date.now() });
+    return null;
+  }
+}
+
+async function listChannels(db = prisma, options = {}) {
+  const channels = await repository.listActive(db);
+  const service = options.whatsappService || whatsappService;
+  const cache = options.profilePictureCache || profilePictures;
+  return {
+    data: await Promise.all(channels.map(async (channel) => toChannelDto({
+      ...channel,
+      profilePictureUrl: await getProfilePicture(channel, service, cache),
+    }))),
+  };
 }
 
 async function resolveSelection({ channelId, phoneNumberId } = {}, db = prisma) {

@@ -158,3 +158,15 @@ test("endpoint de canais expõe somente metadados seguros dos dois números", as
   assert.equal(result.data[0].isDefault, true);
   assert.equal(JSON.stringify(result).includes("token"), false);
 });
+
+test("lista a foto pública do perfil comercial de cada canal", async () => {
+  const db = createFakePrisma();
+  const result = await channelService.listChannels(db, {
+    whatsappService: {
+      getBusinessProfilePicture: async (phoneNumberId) => `https://cdn.example.test/${phoneNumberId}.jpg`,
+    },
+    profilePictureCache: new Map(),
+  });
+  assert.equal(result.data[0].profilePictureUrl, `https://cdn.example.test/${MAIN_ID}.jpg`);
+  assert.equal(result.data[1].profilePictureUrl, `https://cdn.example.test/${SECOND_ID}.jpg`);
+});

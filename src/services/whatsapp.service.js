@@ -170,6 +170,14 @@ async function sendReactionMessage(to, messageId, emoji, phoneNumberId) {
   }, phoneNumberId)).data;
 }
 
+async function getBusinessProfilePicture(phoneNumberId) {
+  const query = new URLSearchParams({ fields: "profile_picture_url" });
+  const response = await graphRequest(`${graphUrl(resolvePhoneNumberId(phoneNumberId), "whatsapp_business_profile")}?${query}`);
+  const profile = Array.isArray(response.data?.data) ? response.data.data[0] : response.data;
+  const pictureUrl = String(profile?.profile_picture_url || "").trim();
+  return pictureUrl || null;
+}
+
 async function sendImageMessage(to, mediaId, caption, phoneNumberId) {
   return (await sendMessage(to, { type: "image", image: { id: mediaId, ...(caption ? { caption } : {}) } }, phoneNumberId)).data;
 }
@@ -301,6 +309,7 @@ module.exports = {
   initiateCall,
   getCallPermission,
   requestCallPermission,
+  getBusinessProfilePicture,
   maskRecipient,
   MetaApiError,
   resolvePhoneNumberId,
