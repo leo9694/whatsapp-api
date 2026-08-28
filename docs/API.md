@@ -449,6 +449,8 @@ Exemplo de chamada recebida:
 5. Confirme em `POST /api/calls/:callId/media-ready`.
 6. O backend só aceita a chamada na Meta depois de detectar RTP recente do atendente.
 
+A chamada de `media-ready` pode ser feita assim que o navegador aplicar a answer. A API aguarda por até `CALL_MEDIA_READY_WAIT_MS` (8 segundos por padrão) pelo primeiro RTP, evitando falhas intermitentes causadas pela negociação ICE ainda em andamento. Se o prazo terminar, retorna HTTP 409 e o frontend deve encerrar essa sessão de mídia ou permitir nova tentativa; nunca deve apresentar a chamada como conectada.
+
 ```js
 const joined = await fetch(`${API}/api/calls/${encodeURIComponent(callId)}/media`, {
   method: "POST",

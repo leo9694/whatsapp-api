@@ -18,6 +18,17 @@ const { toConversationDto } = require("../utils/conversationDto");
 
 const CONTROLLABLE = new Set(["RINGING", "CONNECTING", "ACTIVE"]);
 
+function logMediaNotReady(stage, callId, agentId, readiness = {}) {
+  logger.warn("call_agent_media_not_ready", {
+    stage,
+    callId,
+    agentId: String(agentId),
+    lastRtpAgeMs: Number.isFinite(readiness.lastRtpAgeMs) ? readiness.lastRtpAgeMs : null,
+    iceState: readiness.iceState || null,
+    peerState: readiness.peerState || null,
+  });
+}
+
 function parseTimestamp(value, fallback = new Date()) {
   const seconds = Number(value);
   return Number.isFinite(seconds) && seconds > 0 ? new Date(seconds * 1000) : fallback;
@@ -427,8 +438,12 @@ async function initiate(conversationId, input, dependencies = {}) {
   let offer = input.session?.sdp;
   if (mediaGateway.enabled()) {
     if (!input.mediaSessionId) throw new AppError("Sessão de mídia outbound obrigatória.", 400);
-    const readiness = await (dependencies.agentReady || mediaGateway.agentReady)(input.mediaSessionId, input.agent.id);
-    if (!readiness.ready) throw new AppError("O microfone ainda não está pronto.", 409);
+    const waitForReady = dependencies.waitForAgentReady || mediaGateway.waitForAgentReady;
+    const readiness = await waitForReady(input.mediaSessionId, input.agent.id);
+    if (!readiness.ready) {
+      logMediaNotReady("outbound", input.mediaSessionId, input.agent.id, readiness);
+      throw new AppError("O microfone ainda não está pronto.", 409);
+    }
     await (dependencies.setCurrentAgent || mediaGateway.setCurrentAgent)(input.mediaSessionId, input.agent.id);
     offer = (await (dependencies.createMetaOffer || mediaGateway.createMetaOffer)(input.mediaSessionId)).offer;
   }
@@ -492,8 +507,11 @@ async function mediaReady(callId, input, agent, dependencies = {}) {
     throw new AppError("A chamada não está aguardando ativação de mídia.", 409);
   }
   const gateway = dependencies.mediaGateway || mediaGateway;
-  const readiness = await gateway.agentReady(callId, agent.id);
-  if (!readiness.ready) throw new AppError("O áudio do atendente ainda não está pronto.", 409);
+  const readiness = await (gateway.waitForAgentReady || gateway.agentReady)(callId, agent.id);
+  if (!readiness.ready) {
+    logMediaNotReady("inbound", callId, agent.id, readiness);
+    throw new AppError("O áudio do atendente ainda não está pronto.", 409);
+  }
   await gateway.setCurrentAgent(callId, agent.id);
   const metaSession = await gateway.getMetaSession(callId);
   try {

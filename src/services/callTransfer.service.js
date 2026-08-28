@@ -159,8 +159,18 @@ async function completeTransfer(metaCallId, transferId, actor, dependencies = {}
   if (transfer.call.status !== "ACTIVE" || String(transfer.call.currentAgentId) !== transfer.fromAgentId) {
     throw appError("A chamada mudou durante a transferência.", 409, "TRANSFER_STALE");
   }
-  const readiness = await gateway.agentReady(metaCallId, actor.id);
-  if (!readiness.ready) throw appError("O áudio do novo atendente ainda não está pronto.", 409, "MEDIA_NOT_READY");
+  const readiness = await (gateway.waitForAgentReady || gateway.agentReady)(metaCallId, actor.id);
+  if (!readiness.ready) {
+    logger.warn("call_agent_media_not_ready", {
+      stage: "transfer",
+      callId: metaCallId,
+      agentId: String(actor.id),
+      lastRtpAgeMs: Number.isFinite(readiness.lastRtpAgeMs) ? readiness.lastRtpAgeMs : null,
+      iceState: readiness.iceState || null,
+      peerState: readiness.peerState || null,
+    });
+    throw appError("O áudio do novo atendente ainda não está pronto.", 409, "MEDIA_NOT_READY");
+  }
   const switched = await gateway.setCurrentAgent(metaCallId, actor.id);
   const now = new Date();
   try {

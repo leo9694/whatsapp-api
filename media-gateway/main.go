@@ -50,6 +50,13 @@ type gateway struct {
 	sessions map[string]*callSession
 }
 
+type agentHealth struct {
+	Ready        bool   `json:"ready"`
+	LastRTPAgeMS int64  `json:"lastRtpAgeMs"`
+	ICEState     string `json:"iceState"`
+	PeerState    string `json:"peerState"`
+}
+
 func newGateway(publicIP string, minPort, maxPort uint16) (*gateway, error) {
 	var mediaEngine webrtc.MediaEngine
 	err := mediaEngine.RegisterCodec(webrtc.RTPCodecParameters{
@@ -70,6 +77,7 @@ func newGateway(publicIP string, minPort, maxPort uint16) (*gateway, error) {
 	if err = settings.SetEphemeralUDPPortRange(minPort, maxPort); err != nil {
 		return nil, err
 	}
+	settings.SetICETimeouts(15*time.Second, 45*time.Second, 2*time.Second)
 	settings.SetNAT1To1IPs([]string{publicIP}, webrtc.ICECandidateTypeHost)
 	api := webrtc.NewAPI(
 		webrtc.WithMediaEngine(&mediaEngine),
@@ -155,9 +163,26 @@ func (g *gateway) bind(oldID, callID string) error {
 		return fmt.Errorf("call already exists")
 	}
 	delete(g.sessions, oldID)
+	session.mu.Lock()
 	session.id = callID
+	session.mu.Unlock()
 	g.sessions[callID] = session
 	return nil
+}
+
+func (s *callSession) sessionID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.id
+}
+
+func logPeerStates(peer *webrtc.PeerConnection, session *callSession, role, agentID string) {
+	peer.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
+		log.Printf("media ice state call=%s role=%s agent=%s state=%s", session.sessionID(), role, agentID, state.String())
+	})
+	peer.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+		log.Printf("media peer state call=%s role=%s agent=%s state=%s", session.sessionID(), role, agentID, state.String())
+	})
 }
 
 func (g *gateway) closeSession(id string) {
@@ -172,13 +197,19 @@ func (g *gateway) closeSession(id string) {
 
 func (s *callSession) close() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	agents := make([]*webrtc.PeerConnection, 0, len(s.agents))
 	for _, agent := range s.agents {
-		_ = agent.peer.Close()
+		agents = append(agents, agent.peer)
 	}
 	s.agents = make(map[string]*agentPeer)
-	if s.metaPeer != nil {
-		_ = s.metaPeer.Close()
+	metaPeer := s.metaPeer
+	s.metaPeer = nil
+	s.mu.Unlock()
+	for _, peer := range agents {
+		_ = peer.Close()
+	}
+	if metaPeer != nil {
+		_ = metaPeer.Close()
 	}
 }
 
@@ -205,9 +236,12 @@ func (s *callSession) relayAgent(agent *agentPeer, track *webrtc.TrackRemote) {
 		packet, _, err := track.ReadRTP()
 		if err != nil {
 			agent.ready.Store(false)
+			log.Printf("agent rtp stopped call=%s agent=%s error=%v", s.sessionID(), agent.id, err)
 			return
 		}
-		agent.ready.Store(true)
+		if agent.ready.CompareAndSwap(false, true) {
+			log.Printf("agent rtp started call=%s agent=%s", s.sessionID(), agent.id)
+		}
 		agent.lastRTP.Store(time.Now().UnixMilli())
 		s.mu.RLock()
 		current := s.currentAgent
@@ -224,6 +258,7 @@ func (g *gateway) configureMetaPeer(session *callSession) (*webrtc.PeerConnectio
 	if err != nil {
 		return nil, err
 	}
+	logPeerStates(peer, session, "meta", "")
 	toMeta, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{
 		MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2,
 		SDPFmtpLine: "minptime=10;useinbandfec=1",
@@ -338,12 +373,18 @@ func (g *gateway) joinAgent(sessionID, agentID, name, offer string) (string, err
 	existing := session.agents[agentID]
 	session.mu.RUnlock()
 	if existing != nil {
+		session.mu.Lock()
+		if session.agents[agentID] == existing {
+			delete(session.agents, agentID)
+		}
+		session.mu.Unlock()
 		_ = existing.peer.Close()
 	}
 	peer, err := g.api.NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
 		return "", err
 	}
+	logPeerStates(peer, session, "agent", agentID)
 	toAgent, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{
 		MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2,
 		SDPFmtpLine: "minptime=10;useinbandfec=1",
@@ -387,19 +428,28 @@ func (g *gateway) joinAgent(sessionID, agentID, name, offer string) (string, err
 	return sdpWithPtime(peer.LocalDescription().SDP), nil
 }
 
-func (g *gateway) agentReady(callID, agentID string) (bool, error) {
+func (g *gateway) agentReady(callID, agentID string) (agentHealth, error) {
 	session, err := g.session(callID)
 	if err != nil {
-		return false, err
+		return agentHealth{}, err
 	}
 	session.mu.RLock()
 	agent := session.agents[agentID]
 	session.mu.RUnlock()
 	if agent == nil {
-		return false, fmt.Errorf("agent media not found")
+		return agentHealth{}, fmt.Errorf("agent media not found")
 	}
-	recent := time.Now().UnixMilli()-agent.lastRTP.Load() < 5000
-	return agent.ready.Load() && recent, nil
+	lastRTP := agent.lastRTP.Load()
+	age := int64(-1)
+	if lastRTP > 0 {
+		age = time.Now().UnixMilli() - lastRTP
+	}
+	return agentHealth{
+		Ready:        agent.ready.Load() && age >= 0 && age < 5000,
+		LastRTPAgeMS: age,
+		ICEState:     agent.peer.ICEConnectionState().String(),
+		PeerState:    agent.peer.ConnectionState().String(),
+	}, nil
 }
 
 func (g *gateway) setCurrent(callID, agentID string) (string, error) {
@@ -410,7 +460,7 @@ func (g *gateway) setCurrent(callID, agentID string) (string, error) {
 	session.mu.Lock()
 	defer session.mu.Unlock()
 	agent := session.agents[agentID]
-	if agent == nil || !agent.ready.Load() {
+	if agent == nil || !agent.ready.Load() || time.Now().UnixMilli()-agent.lastRTP.Load() >= 5000 {
 		return "", fmt.Errorf("agent media not ready")
 	}
 	previous := session.currentAgent
@@ -543,10 +593,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	case len(parts) == 6 && parts[0] == "v1" && parts[1] == "calls" && parts[3] == "agents" && parts[5] == "ready" && r.Method == "GET":
-		var ready bool
-		ready, err = s.gateway.agentReady(parts[2], parts[4])
+		var health agentHealth
+		health, err = s.gateway.agentReady(parts[2], parts[4])
 		if err == nil {
-			writeJSON(w, 200, map[string]bool{"ready": ready})
+			writeJSON(w, 200, health)
 			return
 		}
 	case len(parts) == 4 && parts[0] == "v1" && parts[1] == "calls" && parts[3] == "current-agent" && r.Method == "POST":

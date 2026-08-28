@@ -61,6 +61,7 @@ NODE_ENV=production
 - `INTERNAL_API_KEY`: proteção temporária das rotas `/api/*`; envie-a em `X-API-Key`. Não exponha essa chave no frontend público.
 - `CALL_AGENT_AUTH_SECRET`: segredo HMAC de no mínimo 32 caracteres, igual no servidor do frontend; autentica a identidade real do atendente sem expor o segredo ao navegador.
 - `CALL_MEDIA_GATEWAY_ENABLED` e `CALL_AGENT_AUTH_REQUIRED`: feature flags para ativação gradual do gateway e da autenticação individual.
+- `CALL_MEDIA_READY_WAIT_MS`: janela curta (padrão 8 segundos) em que a API aguarda o primeiro RTP do microfone antes de rejeitar a ativação.
 - `MEDIA_GATEWAY_URL`/`MEDIA_GATEWAY_TOKEN`: canal local autenticado entre Express e o gateway Pion.
 - `MEDIA_PUBLIC_IP` e `MEDIA_UDP_MIN_PORT`/`MEDIA_UDP_MAX_PORT`: IP anunciado no ICE e faixa UDP pública exclusiva da mídia.
 

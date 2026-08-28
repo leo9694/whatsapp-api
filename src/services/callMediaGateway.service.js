@@ -67,6 +67,31 @@ function agentReady(callId, agentId) {
   return request(`/v1/calls/${encodeURIComponent(callId)}/agents/${encodeURIComponent(agentId)}/ready`);
 }
 
+function readyWaitMs() {
+  const value = Number(process.env.CALL_MEDIA_READY_WAIT_MS || 8000);
+  return Number.isFinite(value) ? Math.min(Math.max(value, 0), 15000) : 8000;
+}
+
+function pause(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function waitForAgentReady(callId, agentId, options = {}) {
+  const check = options.check || agentReady;
+  const sleep = options.sleep || pause;
+  const timeoutMs = options.timeoutMs ?? readyWaitMs();
+  const intervalMs = options.intervalMs ?? 250;
+  const deadline = Date.now() + timeoutMs;
+  let readiness;
+  do {
+    readiness = await check(callId, agentId);
+    if (readiness.ready) return readiness;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return readiness;
+    await sleep(Math.min(intervalMs, remaining));
+  } while (true);
+}
+
 function setCurrentAgent(callId, agentId) {
   return request(`/v1/calls/${encodeURIComponent(callId)}/current-agent`, json("POST", { agentId }));
 }
@@ -82,4 +107,5 @@ function closeCall(callId) {
 module.exports = {
   agentReady, bindOutboundSession, closeCall, createMetaOffer, createOutboundSession,
   enabled, getMetaSession, joinAgent, prepareInbound, removeAgent, setCurrentAgent, setMetaAnswer,
+  waitForAgentReady,
 };
