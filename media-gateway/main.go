@@ -34,15 +34,15 @@ type agentPeer struct {
 }
 
 type callSession struct {
-	mu           sync.RWMutex
-	id           string
+	mu            sync.RWMutex
+	id            string
 	metaPeer      *webrtc.PeerConnection
 	toMeta        *webrtc.TrackLocalStaticRTP
 	metaLocalSDP  string
 	metaRemoteSDP string
-	agents       map[string]*agentPeer
-	currentAgent string
-	createdAt    time.Time
+	agents        map[string]*agentPeer
+	currentAgent  string
+	createdAt     time.Time
 }
 
 type gateway struct {
