@@ -59,3 +59,21 @@ func TestSessionBindPreservesSession(t *testing.T) {
 		t.Fatal("temporary session should no longer exist")
 	}
 }
+
+func TestConcurrentCallsUseIsolatedSessions(t *testing.T) {
+	g := &gateway{sessions: make(map[string]*callSession)}
+	first, err := g.newSession("call-channel-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := g.newSession("call-channel-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second || first.sessionID() == second.sessionID() {
+		t.Fatal("concurrent calls must not share their media session")
+	}
+	if len(g.sessions) != 2 {
+		t.Fatalf("expected two active sessions, got %d", len(g.sessions))
+	}
+}

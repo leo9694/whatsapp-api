@@ -57,6 +57,10 @@ function getMetaSession(callId) {
   return request(`/v1/calls/${encodeURIComponent(callId)}/meta-session`);
 }
 
+function repairMetaSession(callId) {
+  return request(`/v1/calls/${encodeURIComponent(callId)}/meta-repair`, { method: "POST" });
+}
+
 function joinAgent(callId, agent, offer) {
   return request(`/v1/calls/${encodeURIComponent(callId)}/agents`, json("POST", {
     agentId: agent.id, agentName: agent.name, offer,
@@ -92,6 +96,25 @@ async function waitForAgentReady(callId, agentId, options = {}) {
   } while (true);
 }
 
+async function waitForMetaReady(callId, options = {}) {
+  const check = options.check || getMetaSession;
+  const sleep = options.sleep || pause;
+  const timeoutMs = options.timeoutMs ?? readyWaitMs();
+  const intervalMs = options.intervalMs ?? 250;
+  const requiredConsecutive = options.requiredConsecutive ?? 3;
+  const deadline = Date.now() + timeoutMs;
+  let readiness;
+  let consecutive = 0;
+  do {
+    readiness = await check(callId);
+    consecutive = readiness.ready ? consecutive + 1 : 0;
+    if (consecutive >= requiredConsecutive) return readiness;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return readiness;
+    await sleep(Math.min(intervalMs, remaining));
+  } while (true);
+}
+
 function setCurrentAgent(callId, agentId) {
   return request(`/v1/calls/${encodeURIComponent(callId)}/current-agent`, json("POST", { agentId }));
 }
@@ -106,6 +129,6 @@ function closeCall(callId) {
 
 module.exports = {
   agentReady, bindOutboundSession, closeCall, createMetaOffer, createOutboundSession,
-  enabled, getMetaSession, joinAgent, prepareInbound, removeAgent, setCurrentAgent, setMetaAnswer,
-  waitForAgentReady,
+  enabled, getMetaSession, joinAgent, prepareInbound, removeAgent, repairMetaSession,
+  setCurrentAgent, setMetaAnswer, waitForAgentReady, waitForMetaReady,
 };

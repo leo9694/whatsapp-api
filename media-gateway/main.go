@@ -36,9 +36,10 @@ type agentPeer struct {
 type callSession struct {
 	mu           sync.RWMutex
 	id           string
-	metaPeer     *webrtc.PeerConnection
-	toMeta       *webrtc.TrackLocalStaticRTP
-	metaLocalSDP string
+	metaPeer      *webrtc.PeerConnection
+	toMeta        *webrtc.TrackLocalStaticRTP
+	metaLocalSDP  string
+	metaRemoteSDP string
 	agents       map[string]*agentPeer
 	currentAgent string
 	createdAt    time.Time
@@ -55,6 +56,12 @@ type agentHealth struct {
 	LastRTPAgeMS int64  `json:"lastRtpAgeMs"`
 	ICEState     string `json:"iceState"`
 	PeerState    string `json:"peerState"`
+}
+
+type metaHealth struct {
+	Ready     bool   `json:"ready"`
+	ICEState  string `json:"iceState"`
+	PeerState string `json:"peerState"`
 }
 
 func newGateway(publicIP string, minPort, maxPort uint16) (*gateway, error) {
@@ -253,10 +260,10 @@ func (s *callSession) relayAgent(agent *agentPeer, track *webrtc.TrackRemote) {
 	}
 }
 
-func (g *gateway) configureMetaPeer(session *callSession) (*webrtc.PeerConnection, error) {
+func (g *gateway) configureMetaPeer(session *callSession) (*webrtc.PeerConnection, *webrtc.TrackLocalStaticRTP, error) {
 	peer, err := g.api.NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	logPeerStates(peer, session, "meta", "")
 	toMeta, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{
@@ -265,12 +272,12 @@ func (g *gateway) configureMetaPeer(session *callSession) (*webrtc.PeerConnectio
 	}, "audio", "norte-sul-media")
 	if err != nil {
 		_ = peer.Close()
-		return nil, err
+		return nil, nil, err
 	}
 	sender, err := peer.AddTrack(toMeta)
 	if err != nil {
 		_ = peer.Close()
-		return nil, err
+		return nil, nil, err
 	}
 	drainRTCP(sender)
 	peer.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
@@ -278,11 +285,7 @@ func (g *gateway) configureMetaPeer(session *callSession) (*webrtc.PeerConnectio
 			go session.relayMeta(track)
 		}
 	})
-	session.mu.Lock()
-	session.metaPeer = peer
-	session.toMeta = toMeta
-	session.mu.Unlock()
-	return peer, nil
+	return peer, toMeta, nil
 }
 
 func (g *gateway) prepareInbound(callID, offer string) (string, error) {
@@ -290,7 +293,7 @@ func (g *gateway) prepareInbound(callID, offer string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	peer, err := g.configureMetaPeer(session)
+	peer, toMeta, err := g.configureMetaPeer(session)
 	if err != nil {
 		g.closeSession(callID)
 		return "", err
@@ -314,7 +317,10 @@ func (g *gateway) prepareInbound(callID, offer string) (string, error) {
 	}
 	local := sdpWithPtime(peer.LocalDescription().SDP)
 	session.mu.Lock()
+	session.metaPeer = peer
+	session.toMeta = toMeta
 	session.metaLocalSDP = local
+	session.metaRemoteSDP = offer
 	session.mu.Unlock()
 	return local, nil
 }
@@ -329,7 +335,7 @@ func (g *gateway) createMetaOffer(sessionID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	peer, err := g.configureMetaPeer(session)
+	peer, toMeta, err := g.configureMetaPeer(session)
 	if err != nil {
 		return "", err
 	}
@@ -345,9 +351,84 @@ func (g *gateway) createMetaOffer(sessionID string) (string, error) {
 	}
 	local := sdpWithPtime(peer.LocalDescription().SDP)
 	session.mu.Lock()
+	session.metaPeer = peer
+	session.toMeta = toMeta
 	session.metaLocalSDP = local
 	session.mu.Unlock()
 	return local, nil
+}
+
+func (g *gateway) metaReady(callID string) (metaHealth, error) {
+	session, err := g.session(callID)
+	if err != nil {
+		return metaHealth{}, err
+	}
+	session.mu.RLock()
+	peer := session.metaPeer
+	session.mu.RUnlock()
+	if peer == nil {
+		return metaHealth{}, fmt.Errorf("meta media not found")
+	}
+	iceState := peer.ICEConnectionState().String()
+	peerState := peer.ConnectionState().String()
+	return metaHealth{
+		Ready:     (iceState == "connected" || iceState == "completed") && peerState == "connected",
+		ICEState:  iceState,
+		PeerState: peerState,
+	}, nil
+}
+
+func (g *gateway) repairMeta(callID string) (string, bool, error) {
+	session, err := g.session(callID)
+	if err != nil {
+		return "", false, err
+	}
+	health, err := g.metaReady(callID)
+	if err == nil && health.Ready {
+		session.mu.RLock()
+		local := session.metaLocalSDP
+		session.mu.RUnlock()
+		return local, false, nil
+	}
+	session.mu.RLock()
+	offer := session.metaRemoteSDP
+	previous := session.metaPeer
+	session.mu.RUnlock()
+	if offer == "" {
+		return "", false, fmt.Errorf("meta remote session not found")
+	}
+	peer, toMeta, err := g.configureMetaPeer(session)
+	if err != nil {
+		return "", false, err
+	}
+	if err = peer.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: offer}); err != nil {
+		_ = peer.Close()
+		return "", false, err
+	}
+	answer, err := peer.CreateAnswer(nil)
+	if err != nil {
+		_ = peer.Close()
+		return "", false, err
+	}
+	if err = peer.SetLocalDescription(answer); err != nil {
+		_ = peer.Close()
+		return "", false, err
+	}
+	if err = waitGathering(peer); err != nil {
+		_ = peer.Close()
+		return "", false, err
+	}
+	local := sdpWithPtime(peer.LocalDescription().SDP)
+	session.mu.Lock()
+	session.metaPeer = peer
+	session.toMeta = toMeta
+	session.metaLocalSDP = local
+	session.mu.Unlock()
+	if previous != nil && previous != peer {
+		_ = previous.Close()
+	}
+	log.Printf("meta media repaired call=%s", callID)
+	return local, true, nil
 }
 
 func (g *gateway) setMetaAnswer(callID, answer string) error {
@@ -578,9 +659,25 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if localSDP == "" {
 				err = fmt.Errorf("meta session not ready")
 			} else {
-				writeJSON(w, 200, map[string]string{"sdp": localSDP})
-				return
+				health, healthErr := s.gateway.metaReady(parts[2])
+				if healthErr != nil {
+					err = healthErr
+				} else {
+					writeJSON(w, 200, map[string]any{
+						"sdp": localSDP, "ready": health.Ready,
+						"iceState": health.ICEState, "peerState": health.PeerState,
+					})
+					return
+				}
 			}
+		}
+	case len(parts) == 4 && parts[0] == "v1" && parts[1] == "calls" && parts[3] == "meta-repair" && r.Method == "POST":
+		var local string
+		var repaired bool
+		local, repaired, err = s.gateway.repairMeta(parts[2])
+		if err == nil {
+			writeJSON(w, 200, map[string]any{"sdp": local, "repaired": repaired})
+			return
 		}
 	case len(parts) == 4 && parts[0] == "v1" && parts[1] == "calls" && parts[3] == "agents" && r.Method == "POST":
 		var body struct{ AgentID, AgentName, Offer string }

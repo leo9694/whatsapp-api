@@ -512,12 +512,37 @@ async function mediaReady(callId, input, agent, dependencies = {}) {
     logMediaNotReady("inbound", callId, agent.id, readiness);
     throw new AppError("O áudio do atendente ainda não está pronto.", 409);
   }
-  await gateway.setCurrentAgent(callId, agent.id);
-  const metaSession = await gateway.getMetaSession(callId);
+  let metaSession = await gateway.getMetaSession(callId);
+  if (!metaSession.ready) {
+    metaSession = await gateway.repairMetaSession(callId);
+    if (metaSession.repaired) {
+      await (dependencies.preAcceptCall || whatsappService.preAcceptCall)(call.phoneNumberId, callId, metaSession.sdp);
+    }
+  }
+  let acceptedByMeta = false;
   try {
     await (dependencies.acceptCall || whatsappService.acceptCall)(call.phoneNumberId, callId, metaSession.sdp);
+    acceptedByMeta = true;
+    const metaReadiness = await (gateway.waitForMetaReady || gateway.getMetaSession)(callId);
+    if (!metaReadiness.ready) {
+      const error = new AppError("A conexão de áudio com a Meta não foi estabelecida.", 502);
+      error.publicCode = "META_MEDIA_NOT_READY";
+      throw error;
+    }
+    await gateway.setCurrentAgent(callId, agent.id);
   } catch (error) {
     await gateway.removeAgent(callId, agent.id).catch(() => {});
+    if (acceptedByMeta) {
+      await (dependencies.terminateCall || whatsappService.terminateCall)(call.phoneNumberId, callId).catch(() => {});
+      await gateway.closeCall(callId).catch(() => {});
+      const failed = await callRepository.update(callId, {
+        status: "FAILED", endedAt: new Date(), endReason: "META_MEDIA_NOT_READY",
+      }, db);
+      emitCall(failed);
+      logger.error("call_meta_media_not_ready", {
+        callId, phoneNumberId: call.phoneNumberId, agentId: String(agent.id),
+      });
+    }
     throw error;
   }
   const now = new Date();

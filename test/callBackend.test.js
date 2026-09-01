@@ -128,6 +128,29 @@ test("pré-aceita e aceita com o mesmo SDP answer usando o contrato oficial", as
   assert.equal(calls[0][1], PHONE_ID);
 });
 
+test("recria a perna Meta fechada antes de ativar a chamada recebida", async () => {
+  const db = createFakePrisma();
+  await createInbound(db);
+  const actions = [];
+  const active = await callService.mediaReady(CALL_ID, {}, agent, {
+    db,
+    mediaGateway: {
+      waitForAgentReady: async () => ({ ready: true, lastRtpAgeMs: 10 }),
+      getMetaSession: async () => ({ sdp: ANSWER, ready: false, peerState: "closed" }),
+      repairMetaSession: async () => ({ sdp: `${ANSWER}a=x-repaired\r\n`, repaired: true }),
+      waitForMetaReady: async () => ({ ready: true, peerState: "connected" }),
+      setCurrentAgent: async () => { actions.push("current"); },
+      removeAgent: async () => {},
+      closeCall: async () => {},
+    },
+    preAcceptCall: async (_phone, _callId, sdp) => { actions.push(["pre_accept", sdp]); },
+    acceptCall: async (_phone, _callId, sdp) => { actions.push(["accept", sdp]); },
+  });
+  assert.equal(active.status, "ACTIVE");
+  assert.deepEqual(actions.map((item) => Array.isArray(item) ? item[0] : item), ["pre_accept", "accept", "current"]);
+  assert.equal(actions[0][1], actions[1][1]);
+});
+
 test("rejeita chamada recebida e encerra chamada ativa calculando duração desde answeredAt", async () => {
   const rejectedDb = createFakePrisma();
   await createInbound(rejectedDb);
