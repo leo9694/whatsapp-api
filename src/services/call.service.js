@@ -137,8 +137,7 @@ async function processCallEvent({ call, contacts = [], phoneNumberId, channel, e
     if (mediaGateway.enabled()) {
       try {
         if (callDirection === "INBOUND") {
-          const prepared = await (dependencies.prepareInbound || mediaGateway.prepareInbound)(call.id, call.session?.sdp);
-          await (dependencies.preAcceptCall || whatsappService.preAcceptCall)(phoneNumberId, call.id, prepared.answer);
+          await (dependencies.prepareInbound || mediaGateway.prepareInbound)(call.id, call.session?.sdp);
         } else if (call.session?.sdp) {
           await (dependencies.setMetaAnswer || mediaGateway.setMetaAnswer)(call.id, call.session.sdp);
         }
@@ -513,14 +512,15 @@ async function mediaReady(callId, input, agent, dependencies = {}) {
     throw new AppError("O áudio do atendente ainda não está pronto.", 409);
   }
   let metaSession = await gateway.getMetaSession(callId);
-  if (!metaSession.ready) {
+  const metaState = String(metaSession.peerState || metaSession.iceState || "").toLowerCase();
+  if (["closed", "failed"].includes(metaState)) {
     metaSession = await gateway.repairMetaSession(callId);
-    if (metaSession.repaired) {
-      await (dependencies.preAcceptCall || whatsappService.preAcceptCall)(call.phoneNumberId, callId, metaSession.sdp);
-    }
   }
   let acceptedByMeta = false;
+  let preAcceptedByMeta = false;
   try {
+    await (dependencies.preAcceptCall || whatsappService.preAcceptCall)(call.phoneNumberId, callId, metaSession.sdp);
+    preAcceptedByMeta = true;
     await (dependencies.acceptCall || whatsappService.acceptCall)(call.phoneNumberId, callId, metaSession.sdp);
     acceptedByMeta = true;
     const metaReadiness = await (gateway.waitForMetaReady || gateway.getMetaSession)(callId);
@@ -532,8 +532,11 @@ async function mediaReady(callId, input, agent, dependencies = {}) {
     await gateway.setCurrentAgent(callId, agent.id);
   } catch (error) {
     await gateway.removeAgent(callId, agent.id).catch(() => {});
-    if (acceptedByMeta) {
-      await (dependencies.terminateCall || whatsappService.terminateCall)(call.phoneNumberId, callId).catch(() => {});
+    if (preAcceptedByMeta) {
+      const closeMetaCall = acceptedByMeta
+        ? (dependencies.terminateCall || whatsappService.terminateCall)
+        : (dependencies.rejectCall || whatsappService.rejectCall);
+      await closeMetaCall(call.phoneNumberId, callId).catch(() => {});
       await gateway.closeCall(callId).catch(() => {});
       const failed = await callRepository.update(callId, {
         status: "FAILED", endedAt: new Date(), endReason: "META_MEDIA_NOT_READY",
