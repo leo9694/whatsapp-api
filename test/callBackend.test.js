@@ -128,7 +128,7 @@ test("pré-aceita e aceita com o mesmo SDP answer usando o contrato oficial", as
   assert.equal(calls[0][1], PHONE_ID);
 });
 
-test("sinaliza a perna Meta somente quando o atendente está pronto", async () => {
+test("renova e sinaliza a perna Meta somente quando o atendente está pronto", async () => {
   const db = createFakePrisma();
   await createInbound(db);
   const actions = [];
@@ -150,7 +150,8 @@ test("sinaliza a perna Meta somente quando o atendente está pronto", async () =
   assert.equal(active.status, "ACTIVE");
   assert.deepEqual(actions.map((item) => Array.isArray(item) ? item[0] : item), ["pre_accept", "accept", "current"]);
   assert.equal(actions[0][1], actions[1][1]);
-  assert.equal(repaired, false);
+  assert.equal(actions[0][1], `${ANSWER}a=x-repaired\r\n`);
+  assert.equal(repaired, true);
 });
 
 test("recria a perna Meta fechada antes do único pré-aceite", async () => {

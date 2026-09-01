@@ -512,8 +512,7 @@ async function mediaReady(callId, input, agent, dependencies = {}) {
     throw new AppError("O áudio do atendente ainda não está pronto.", 409);
   }
   let metaSession = await gateway.getMetaSession(callId);
-  const metaState = String(metaSession.peerState || metaSession.iceState || "").toLowerCase();
-  if (["closed", "failed"].includes(metaState)) {
+  if (!metaSession.ready) {
     metaSession = await gateway.repairMetaSession(callId);
   }
   let acceptedByMeta = false;
