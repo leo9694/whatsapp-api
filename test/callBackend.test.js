@@ -133,13 +133,14 @@ test("renova e sinaliza a perna Meta somente quando o atendente está pronto", a
   await createInbound(db);
   const actions = [];
   let repaired = false;
+  let readinessChecks = 0;
   const active = await callService.mediaReady(CALL_ID, {}, agent, {
     db,
     mediaGateway: {
       waitForAgentReady: async () => ({ ready: true, lastRtpAgeMs: 10 }),
       getMetaSession: async () => ({ sdp: ANSWER, ready: false, peerState: "new" }),
       repairMetaSession: async () => { repaired = true; return { sdp: `${ANSWER}a=x-repaired\r\n`, repaired: true }; },
-      waitForMetaReady: async () => ({ ready: true, peerState: "connected" }),
+      waitForMetaReady: async () => { readinessChecks += 1; actions.push("ready"); return { ready: true, peerState: "connected" }; },
       setCurrentAgent: async () => { actions.push("current"); },
       removeAgent: async () => {},
       closeCall: async () => {},
@@ -148,10 +149,12 @@ test("renova e sinaliza a perna Meta somente quando o atendente está pronto", a
     acceptCall: async (_phone, _callId, sdp) => { actions.push(["accept", sdp]); },
   });
   assert.equal(active.status, "ACTIVE");
-  assert.deepEqual(actions.map((item) => Array.isArray(item) ? item[0] : item), ["pre_accept", "accept", "current"]);
-  assert.equal(actions[0][1], actions[1][1]);
-  assert.equal(actions[0][1], `${ANSWER}a=x-repaired\r\n`);
+  assert.deepEqual(actions.map((item) => Array.isArray(item) ? item[0] : item), ["pre_accept", "ready", "accept", "ready", "current"]);
+  const signals = actions.filter(Array.isArray);
+  assert.equal(signals[0][1], signals[1][1]);
+  assert.equal(signals[0][1], `${ANSWER}a=x-repaired\r\n`);
   assert.equal(repaired, true);
+  assert.equal(readinessChecks, 2);
 });
 
 test("recria a perna Meta fechada antes do único pré-aceite", async () => {
@@ -165,7 +168,7 @@ test("recria a perna Meta fechada antes do único pré-aceite", async () => {
       waitForAgentReady: async () => ({ ready: true, lastRtpAgeMs: 10 }),
       getMetaSession: async () => ({ sdp: ANSWER, ready: false, peerState: "closed" }),
       repairMetaSession: async () => ({ sdp: repairedAnswer, repaired: true }),
-      waitForMetaReady: async () => ({ ready: true, peerState: "connected" }),
+      waitForMetaReady: async () => { actions.push("ready"); return { ready: true, peerState: "connected" }; },
       setCurrentAgent: async () => { actions.push("current"); },
       removeAgent: async () => {},
       closeCall: async () => {},
@@ -174,9 +177,30 @@ test("recria a perna Meta fechada antes do único pré-aceite", async () => {
     acceptCall: async (_phone, _callId, sdp) => { actions.push(["accept", sdp]); },
   });
   assert.equal(active.status, "ACTIVE");
-  assert.deepEqual(actions.map((item) => Array.isArray(item) ? item[0] : item), ["pre_accept", "accept", "current"]);
-  assert.equal(actions[0][1], repairedAnswer);
-  assert.equal(actions[1][1], repairedAnswer);
+  assert.deepEqual(actions.map((item) => Array.isArray(item) ? item[0] : item), ["pre_accept", "ready", "accept", "ready", "current"]);
+  const signals = actions.filter(Array.isArray);
+  assert.equal(signals[0][1], repairedAnswer);
+  assert.equal(signals[1][1], repairedAnswer);
+});
+
+test("não aceita a chamada antes de a mídia Meta ficar pronta", async () => {
+  const db = createFakePrisma();
+  await createInbound(db);
+  let accepted = false;
+  await assert.rejects(callService.mediaReady(CALL_ID, {}, agent, {
+    db,
+    mediaGateway: {
+      waitForAgentReady: async () => ({ ready: true, lastRtpAgeMs: 10 }),
+      getMetaSession: async () => ({ sdp: ANSWER, ready: true, peerState: "connecting" }),
+      waitForMetaReady: async () => ({ ready: false, peerState: "connecting" }),
+      removeAgent: async () => {},
+      closeCall: async () => {},
+    },
+    preAcceptCall: async () => {},
+    acceptCall: async () => { accepted = true; },
+    rejectCall: async () => {},
+  }), (error) => error.publicCode === "META_MEDIA_NOT_READY");
+  assert.equal(accepted, false);
 });
 
 test("rejeita chamada recebida e encerra chamada ativa calculando duração desde answeredAt", async () => {

@@ -520,6 +520,12 @@ async function mediaReady(callId, input, agent, dependencies = {}) {
   try {
     await (dependencies.preAcceptCall || whatsappService.preAcceptCall)(call.phoneNumberId, callId, metaSession.sdp);
     preAcceptedByMeta = true;
+    const preAcceptReadiness = await (gateway.waitForMetaReady || gateway.getMetaSession)(callId);
+    if (!preAcceptReadiness.ready) {
+      const error = new AppError("A conexão de áudio com a Meta não foi estabelecida antes do aceite.", 502);
+      error.publicCode = "META_MEDIA_NOT_READY";
+      throw error;
+    }
     await (dependencies.acceptCall || whatsappService.acceptCall)(call.phoneNumberId, callId, metaSession.sdp);
     acceptedByMeta = true;
     const metaReadiness = await (gateway.waitForMetaReady || gateway.getMetaSession)(callId);
