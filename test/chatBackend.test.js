@@ -125,6 +125,22 @@ test("marca conversa como lida e prepara mark-as-read na Meta", async () => {
   assert.equal(markedWamid, "wamid.1");
 });
 
+test("ativa o indicador de digitação no número da conversa", async () => {
+  const db = createFakePrisma();
+  const received = await messageService.processInboundMessage(inbound(), { db });
+  await claim(db, received.conversation.id);
+  let request;
+  const result = await conversationService.sendTyping(received.conversation.id, agent, {
+    db,
+    sendTypingIndicator: async (messageId, phoneNumberId) => {
+      request = { messageId, phoneNumberId };
+      return { success: true };
+    },
+  });
+  assert.deepEqual(request, { messageId: "wamid.1", phoneNumberId: "1226938830493899" });
+  assert.deepEqual(result, { success: true, expiresInSeconds: 25 });
+});
+
 test("envia por conversationId com Meta mockada e salva outbound", async () => {
   const db = createFakePrisma();
   const received = await messageService.processInboundMessage(inbound(), { db });

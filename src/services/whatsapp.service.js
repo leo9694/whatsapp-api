@@ -220,6 +220,19 @@ async function markMessageAsRead(messageId, phoneNumberId) {
   })).data;
 }
 
+async function sendTypingIndicator(messageId, phoneNumberId) {
+  const resolvedPhoneNumberId = resolvePhoneNumberId(phoneNumberId);
+  return (await graphRequest(graphUrl(resolvedPhoneNumberId, "messages"), {
+    method: "POST",
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      status: "read",
+      message_id: messageId,
+      typing_indicator: { type: "text" },
+    }),
+  })).data;
+}
+
 async function listMessageTemplates() {
   const { accessToken, apiVersion } = getConfiguration();
   const wabaId = requiredEnvironment("WHATSAPP_WABA_ID");
@@ -298,6 +311,7 @@ module.exports = {
   sendVideoMessage,
   sendTemplateMessage,
   markMessageAsRead,
+  sendTypingIndicator,
   listMessageTemplates,
   getMediaMetadata,
   downloadMedia,

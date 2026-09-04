@@ -292,6 +292,20 @@ async function markRead(id, dependencies = {}) {
   return { conversation, metaMarked };
 }
 
+async function sendTyping(id, agent, dependencies = {}) {
+  const db = dependencies.db || prisma;
+  const send = dependencies.sendTypingIndicator || whatsappService.sendTypingIndicator;
+  const conversation = await getConversation(id, db);
+  if (agent) assertAssigned(conversation, agent);
+  assertFreeTextWindow(conversation);
+  const latestInbound = await messageRepository.findLatestInbound(id, db);
+  if (!latestInbound?.wamid) {
+    throw new AppError("A conversa ainda não possui uma mensagem recebida para ativar o indicador.", 409);
+  }
+  await send(latestInbound.wamid, conversationPhoneNumberId(conversation));
+  return { success: true, expiresInSeconds: 25 };
+}
+
 async function changeStatus(id, status, agent, db = prisma) {
   const current = await getConversation(id, db);
   if (agent) assertAssigned(current, agent, { allowDirector: true });
@@ -359,7 +373,7 @@ async function deleteConversation(id, db = prisma) {
 
 module.exports = {
   listConversations, getConversation, createConversation, listMessages, sendText, sendReaction, sendTemplate, sendMedia,
-  markRead, changeStatus, changeAssignment, deleteConversation, persistOutbound, normalizeWhatsappNumber,
+  markRead, sendTyping, changeStatus, changeAssignment, deleteConversation, persistOutbound, normalizeWhatsappNumber,
   assertAssigned, assertFreeTextWindow, signedText,
   conversationPhoneNumberId,
 };

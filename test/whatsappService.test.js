@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   maskRecipient, sendReactionMessage, sendTextMessage, preAcceptCall,
-  requestCallPermission, getCallPermission,
+  requestCallPermission, getCallPermission, sendTypingIndicator,
 } = require("../src/services/whatsapp.service");
 
 test("mascara o número de destino preservando início e final", () => {
@@ -59,6 +59,32 @@ test("envia resposta usando o contexto oficial da Meta", async () => {
   }
   assert.deepEqual(payload.context, { message_id: "wamid.original" });
   assert.deepEqual(payload.text, { body: "Resposta" });
+});
+
+test("envia indicador de digitação usando o último WAMID recebido", async () => {
+  const originalFetch = global.fetch;
+  const originalToken = process.env.WHATSAPP_ACCESS_TOKEN;
+  const originalVersion = process.env.META_GRAPH_API_VERSION;
+  let request;
+  process.env.WHATSAPP_ACCESS_TOKEN = "token-de-teste";
+  process.env.META_GRAPH_API_VERSION = "v26.0";
+  global.fetch = async (url, options) => {
+    request = { url, payload: JSON.parse(options.body) };
+    return { ok: true, status: 200, json: async () => ({ success: true }) };
+  };
+  try { await sendTypingIndicator("wamid.inbound", "phone-2"); }
+  finally {
+    global.fetch = originalFetch;
+    if (originalToken === undefined) delete process.env.WHATSAPP_ACCESS_TOKEN; else process.env.WHATSAPP_ACCESS_TOKEN = originalToken;
+    if (originalVersion === undefined) delete process.env.META_GRAPH_API_VERSION; else process.env.META_GRAPH_API_VERSION = originalVersion;
+  }
+  assert.equal(request.url, "https://graph.facebook.com/v26.0/phone-2/messages");
+  assert.deepEqual(request.payload, {
+    messaging_product: "whatsapp",
+    status: "read",
+    message_id: "wamid.inbound",
+    typing_indicator: { type: "text" },
+  });
 });
 
 test("pré-aceita chamada usando o contrato oficial da Meta", async () => {

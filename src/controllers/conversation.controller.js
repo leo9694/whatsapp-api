@@ -7,7 +7,7 @@ const {
   createConversationSchema,
   assignmentSchema,
 } = require("../validators/conversation.validator");
-const { textMessageSchema, reactionMessageSchema } = require("../validators/message.validator");
+const { textMessageSchema, reactionMessageSchema, typingIndicatorSchema } = require("../validators/message.validator");
 const { success } = require("../utils/apiResponse");
 
 async function list(req, res, next) {
@@ -60,6 +60,13 @@ async function read(req, res, next) {
   } catch (error) { return next(error); }
 }
 
+async function typing(req, res, next) {
+  try {
+    const { agent } = typingIndicatorSchema.parse(req.body || {});
+    return res.json(await conversationService.sendTyping(idSchema.parse(req.params.id), agent));
+  } catch (error) { return next(error); }
+}
+
 async function changeStatus(req, res, next) {
   try {
     const id = idSchema.parse(req.params.id);
@@ -81,4 +88,4 @@ async function assignment(req, res, next) {
   } catch (error) { return next(error); }
 }
 
-module.exports = { list, get, create, messages, sendMessage, sendReaction, read, changeStatus, assignment, remove };
+module.exports = { list, get, create, messages, sendMessage, sendReaction, read, typing, changeStatus, assignment, remove };

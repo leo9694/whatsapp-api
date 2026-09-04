@@ -153,6 +153,10 @@ Envia uma mensagem real pela Cloud API e persiste a mensagem outbound.
 
 Zera `unreadCount` e, quando existe um wamid inbound, solicita à Meta a marcação como lida.
 
+### `POST /api/conversations/:id/typing`
+
+Ativa no WhatsApp do cliente o indicador de que o atendente está digitando. A API usa internamente o WAMID da última mensagem recebida e o número empresarial da conversa. O indicador é encerrado pela Meta após o envio da resposta ou em até 25 segundos.
+
 ### `PATCH /api/conversations/:id/status`
 
 ```json

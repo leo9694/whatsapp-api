@@ -12,9 +12,12 @@ const reactionMessageSchema = z.object({
   emoji: z.string().trim().min(1).max(16).refine((value) => !/[\r\n]/.test(value)),
   agent: agentSchema.optional(),
 }).strict();
+const typingIndicatorSchema = z.object({
+  agent: agentSchema.optional(),
+}).strict();
 const legacyTextMessageSchema = z.object({
   to: z.string().trim().regex(/^\d{8,15}$/, "Use de 8 a 15 dígitos com código do país."),
   text: z.string().trim().min(1).max(4096),
 }).strict();
 
-module.exports = { textMessageSchema, reactionMessageSchema, legacyTextMessageSchema };
+module.exports = { textMessageSchema, reactionMessageSchema, typingIndicatorSchema, legacyTextMessageSchema };
