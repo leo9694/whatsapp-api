@@ -5,7 +5,30 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"github.com/pion/rtp"
 )
+
+func TestTransferPreservesRTPContinuity(t *testing.T) {
+	a, b := &agentPeer{id: "a"}, &agentPeer{id: "b"}
+	var continuity rtpContinuity
+	first := continuity.rewrite(a, &rtp.Packet{Header: rtp.Header{SequenceNumber: 65535, Timestamp: 50000}})
+	next := continuity.rewrite(b, &rtp.Packet{Header: rtp.Header{SequenceNumber: 120, Timestamp: 900000}})
+	if next.SequenceNumber != 0 || next.Timestamp != first.Timestamp+960 {
+		t.Fatal("transfer broke sequence or audio clock")
+	}
+	next = continuity.rewrite(b, &rtp.Packet{Header: rtp.Header{SequenceNumber: 121, Timestamp: 900960}})
+	if next.SequenceNumber != 1 || next.Timestamp != 51920 {
+		t.Fatal("new source clock did not advance normally")
+	}
+}
+
+func TestRelayStripsExtensionsFromOtherPeer(t *testing.T) {
+	packet := &rtp.Packet{Header: rtp.Header{Version: 2}, Payload: []byte{1}}
+	if err := packet.SetExtension(1, []byte{123}); err != nil { t.Fatal(err) }
+	out := cloneRTP(packet)
+	if out.Extension || len(out.Extensions) != 0 { t.Fatal("foreign SDP extensions forwarded") }
+	if !packet.Extension { t.Fatal("original packet mutated") }
+}
 
 func TestSDPWithPtime(t *testing.T) {
 	sdp := "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=rtpmap:111 opus/48000/2\r\n"

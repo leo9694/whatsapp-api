@@ -43,6 +43,36 @@ type callSession struct {
 	agents        map[string]*agentPeer
 	currentAgent  string
 	createdAt     time.Time
+	toMetaRTP     rtpContinuity
+}
+
+// Each browser has an independent RTP clock. Keep one clock/sequence on the
+// Meta sender across transfers; inbound header extensions belong to another SDP.
+type rtpContinuity struct {
+	source *agentPeer
+	sequence uint16
+	timestamp uint32
+	inputTimestamp uint32
+}
+
+func (c *rtpContinuity) rewrite(source *agentPeer, packet *rtp.Packet) *rtp.Packet {
+	out := cloneRTP(packet)
+	if c.source == nil {
+		c.sequence = packet.SequenceNumber
+		c.timestamp = packet.Timestamp
+	} else {
+		c.sequence++
+		if c.source != source {
+			c.timestamp += 960 // Opus 20ms at 48kHz at the handover boundary.
+		} else {
+			c.timestamp += packet.Timestamp - c.inputTimestamp
+		}
+	}
+	c.source = source
+	c.inputTimestamp = packet.Timestamp
+	out.SequenceNumber = c.sequence
+	out.Timestamp = c.timestamp
+	return out
 }
 
 type gateway struct {
@@ -97,6 +127,9 @@ func newGateway(publicIP string, minPort, maxPort uint16) (*gateway, error) {
 func cloneRTP(packet *rtp.Packet) *rtp.Packet {
 	copyPacket := *packet
 	copyPacket.Payload = append([]byte(nil), packet.Payload...)
+	copyPacket.Extension = false
+	copyPacket.ExtensionProfile = 0
+	copyPacket.Extensions = nil
 	return &copyPacket
 }
 
@@ -250,13 +283,11 @@ func (s *callSession) relayAgent(agent *agentPeer, track *webrtc.TrackRemote) {
 			log.Printf("agent rtp started call=%s agent=%s", s.sessionID(), agent.id)
 		}
 		agent.lastRTP.Store(time.Now().UnixMilli())
-		s.mu.RLock()
-		current := s.currentAgent
-		target := s.toMeta
-		s.mu.RUnlock()
-		if current == agent.id && target != nil {
-			_ = target.WriteRTP(cloneRTP(packet))
+		s.mu.Lock()
+		if s.currentAgent == agent.id && s.agents[agent.id] == agent && s.toMeta != nil {
+			_ = s.toMeta.WriteRTP(s.toMetaRTP.rewrite(agent, packet))
 		}
+		s.mu.Unlock()
 	}
 }
 
