@@ -5,6 +5,7 @@ import (
 	"github.com/pion/webrtc/v4"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGatewayNegotiatesTelephoneEventAt8000Hz(t *testing.T) {
@@ -31,6 +32,79 @@ func TestGatewayNegotiatesTelephoneEventAt8000Hz(t *testing.T) {
 	defer g.closeSession("ivr-codec-test")
 	if !strings.Contains(answer, "telephone-event/8000") {
 		t.Fatal("answer cannot receive WhatsApp keypad tones")
+	}
+}
+
+func TestInboundKeepsOpusWhenDTMFMatchesAndAudioParametersDiffer(t *testing.T) {
+	for _, fmtp := range []string{"minptime=20;useinbandfec=1", "minptime=10;useinbandfec=0"} {
+		t.Run(fmtp, func(t *testing.T) {
+			g, err := newGateway("127.0.0.1", 40000, 40100)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var remoteEngine webrtc.MediaEngine
+			for _, codec := range []webrtc.RTPCodecParameters{
+				{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2, SDPFmtpLine: fmtp}, PayloadType: 111},
+				{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: "audio/telephone-event", ClockRate: 8000, SDPFmtpLine: "0-15"}, PayloadType: 126},
+			} {
+				if err = remoteEngine.RegisterCodec(codec, webrtc.RTPCodecTypeAudio); err != nil {
+					t.Fatal(err)
+				}
+			}
+			remote, err := webrtc.NewAPI(webrtc.WithMediaEngine(&remoteEngine)).NewPeerConnection(webrtc.Configuration{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer remote.Close()
+			if _, err = remote.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio); err != nil {
+				t.Fatal(err)
+			}
+			offer, err := remote.CreateOffer(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = remote.SetLocalDescription(offer); err != nil {
+				t.Fatal(err)
+			}
+			if err = waitGathering(remote); err != nil {
+				t.Fatal(err)
+			}
+			audioReceived := make(chan struct{}, 1)
+			remote.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+				for {
+					packet, _, readErr := track.ReadRTP()
+					if readErr != nil {
+						return
+					}
+					if len(packet.Payload) > 3 && strings.EqualFold(track.Codec().MimeType, webrtc.MimeTypeOpus) {
+						select {
+						case audioReceived <- struct{}{}:
+						default:
+						}
+						return
+					}
+				}
+			})
+			answer, err := g.prepareInbound("ivr-codec-parameters", remote.LocalDescription().SDP)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer g.closeSession("ivr-codec-parameters")
+			if !strings.Contains(answer, "opus/48000/2") || !strings.Contains(answer, "telephone-event/8000") {
+				t.Fatal("answer must negotiate both audio and keypad tones")
+			}
+			if err = remote.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: answer}); err != nil {
+				t.Fatal(err)
+			}
+			if err = g.playIvr("ivr-codec-parameters", true); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-audioReceived:
+			case <-time.After(5 * time.Second):
+				t.Fatal("caller did not receive IVR recording over RTP")
+			}
+		})
 	}
 }
 

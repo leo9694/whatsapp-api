@@ -106,7 +106,8 @@ func newGateway(publicIP string, minPort, maxPort uint16) (*gateway, error) {
 	err := mediaEngine.RegisterCodec(webrtc.RTPCodecParameters{
 		RTPCodecCapability: webrtc.RTPCodecCapability{
 			MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2,
-			SDPFmtpLine: "minptime=10;useinbandfec=1",
+			// Relay encoded Opus without restricting the remote encoder parameters.
+			// Otherwise an exact DTMF match can exclude a partial Opus match in Pion.
 		},
 		PayloadType: 111,
 	}, webrtc.RTPCodecTypeAudio)
