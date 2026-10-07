@@ -187,7 +187,7 @@ async function processCallEvent({ call, contacts = [], phoneNumberId, channel, e
     const endedAt = call.end_time ? parseTimestamp(call.end_time) : eventAt;
     const reason = endReason({ ...call, errors });
     let status;
-    if (existing?.status === "REJECTED") status = "REJECTED";
+    if (["REJECTED", "FAILED", "BUSY"].includes(existing?.status)) status = existing.status;
     else if (metaStatus === "FAILED") status = /busy/i.test(reason || "") ? "BUSY" : "FAILED";
     else status = answeredAt ? "ENDED" : "MISSED";
     const data = {
@@ -204,7 +204,7 @@ async function processCallEvent({ call, contacts = [], phoneNumberId, channel, e
       durationSeconds: Number.isInteger(call.duration)
         ? call.duration
         : answeredAt ? Math.max(0, Math.floor((endedAt - answeredAt) / 1000)) : null,
-      endReason: reason,
+      endReason: ["REJECTED", "FAILED", "BUSY"].includes(existing?.status) ? existing.endReason || reason : reason,
       lastEventAt: eventAt,
     };
     saved = existing
@@ -598,7 +598,7 @@ async function activateMedia(callId, input, agent, dependencies = {}) {
   }
   assertState(await getCallForControl(callId, agent, db), ["RINGING", "CONNECTING"]);
   let metaSession = await gateway.getMetaSession(callId);
-  if (!metaSession.ready) {
+  if (!metaSession.ready && ["failed", "closed"].includes(metaSession.peerState)) {
     metaSession = await gateway.repairMetaSession(callId);
   }
   let acceptedByMeta = false;

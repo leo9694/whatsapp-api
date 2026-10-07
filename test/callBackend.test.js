@@ -228,7 +228,7 @@ test("pré-aceita e aceita com o mesmo SDP answer usando o contrato oficial", as
   assert.equal(calls[0][1], PHONE_ID);
 });
 
-test("renova e sinaliza a perna Meta somente quando o atendente está pronto", async () => {
+test("preserva a perna Meta em negociação e sinaliza o mesmo SDP quando o atendente está pronto", async () => {
   const db = createFakePrisma();
   await createInbound(db);
   const actions = [];
@@ -238,7 +238,7 @@ test("renova e sinaliza a perna Meta somente quando o atendente está pronto", a
     db,
     mediaGateway: {
       waitForAgentReady: async () => ({ ready: true, lastRtpAgeMs: 10 }),
-      getMetaSession: async () => ({ sdp: ANSWER, ready: false, peerState: "new" }),
+      getMetaSession: async () => ({ sdp: ANSWER, ready: false, peerState: "connecting", iceState: "connected" }),
       repairMetaSession: async () => { repaired = true; return { sdp: `${ANSWER}a=x-repaired\r\n`, repaired: true }; },
       waitForMetaReady: async () => { readinessChecks += 1; actions.push("ready"); return { ready: true, peerState: "connected" }; },
       setCurrentAgent: async () => { actions.push("current"); },
@@ -252,8 +252,8 @@ test("renova e sinaliza a perna Meta somente quando o atendente está pronto", a
   assert.deepEqual(actions.map((item) => Array.isArray(item) ? item[0] : item), ["pre_accept", "ready", "accept", "ready", "current"]);
   const signals = actions.filter(Array.isArray);
   assert.equal(signals[0][1], signals[1][1]);
-  assert.equal(signals[0][1], `${ANSWER}a=x-repaired\r\n`);
-  assert.equal(repaired, true);
+  assert.equal(signals[0][1], ANSWER);
+  assert.equal(repaired, false);
   assert.equal(readinessChecks, 2);
 });
 
@@ -318,6 +318,19 @@ test("rejeita chamada recebida e encerra chamada ativa calculando duração desd
   const ended = await callService.terminate(CALL_ID, { agent }, { db: activeDb, terminateCall: async () => ({ success: true }) });
   assert.equal(ended.status, "ENDED");
   assert.ok(ended.durationSeconds >= 5);
+});
+
+test("encerramento da Meta preserva falha de áudio registrada pela API", async () => {
+  const db = createFakePrisma();
+  await createInbound(db);
+  db.state.calls[0].status = "FAILED";
+  db.state.calls[0].endReason = "META_MEDIA_NOT_READY";
+  const result = await callService.processCallEvent({
+    call: inboundCall({ event: "terminate", status: "COMPLETED", timestamp: "1787600010", session: undefined }),
+    phoneNumberId: PHONE_ID,
+  }, { db });
+  assert.equal(result.status, "FAILED");
+  assert.equal(db.state.calls[0].endReason, "META_MEDIA_NOT_READY");
 });
 
 test("webhook terminate usa duração oficial e normaliza falha", async () => {
