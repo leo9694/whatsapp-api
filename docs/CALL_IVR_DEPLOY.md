@@ -13,6 +13,8 @@ A API atende o cliente no gateway e reproduz `media-gateway/audio/menu.ogg`, con
 - Sem atendimento por 120 segundos desde o aceite pela URA, encerra para evitar uma chamada abandonada indefinidamente.
 - O atendente se conecta à perna Meta já aceita; não existe segundo aceite ou renegociação do SDP. O fluxo anterior permanece nos números com URA desativada.
 
+O atendimento automático envia `pre_accept`, aguarda ICE estável e envia `accept` com o mesmo SDP. Só após a confirmação do aceite inicia o silêncio, confirma DTLS e toca o menu. O gateway não escreve RTP enquanto o peer ainda está conectando, para não bloquear as consultas de estado. Após a escolha 1, 2 ou 3, toca uma vez `audio/aguarde.ogg` enquanto notifica o setor; ao conectar um atendente, interrompe a gravação.
+
 Configuração e fase da URA ficam no PostgreSQL. Somente uma sessão assinada de diretoria do ambiente `production` pode alterar a configuração central. O ambiente local não substitui essa configuração e continua sujeito à posse exclusiva da API. Se a API reiniciar, chamadas aceitas e ainda aguardando são recuperadas para a fila geral; se o gateway também reiniciou e perdeu a mídia, são encerradas. Chamadas que ainda não haviam sido aceitas não são ressuscitadas.
 
 ## Instalação

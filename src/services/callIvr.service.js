@@ -75,15 +75,20 @@ function createIvr(deps) {
     try {
       session.call = await deps.repo.update(call.metaCallId, { ivrState: { phase: "MENU", accepted: false } });
       const meta = await deps.gateway.getMetaSession(call.metaCallId);
-      await deps.gateway.playIvr(call.metaCallId, false);
       await deps.whatsapp.preAcceptCall(call.phoneNumberId, call.metaCallId, meta.sdp);
       preAccepted = true;
-      const ready = await deps.gateway.waitForMetaReady(call.metaCallId);
-      if (!ready.ready) throw new AppError("O áudio da Meta não conectou para a URA.", 502);
+      const ice = await deps.gateway.waitForMetaIce(call.metaCallId);
+      if (!ice.ready) throw new AppError("A conexão ICE da Meta não conectou para a URA.", 502);
       const latest = await deps.repo.findByMetaCallId(call.metaCallId);
       if (!latest || terminal.has(latest.status)) { finish(call.metaCallId); return; }
       await deps.whatsapp.acceptCall(call.phoneNumberId, call.metaCallId, meta.sdp);
       accepted = true;
+      const afterAccept = await deps.repo.findByMetaCallId(call.metaCallId);
+      if (!afterAccept || terminal.has(afterAccept.status)) { finish(call.metaCallId); return; }
+      // RTP starts only after Meta confirms the accept; DTLS may finish afterwards.
+      await deps.gateway.playIvr(call.metaCallId, false);
+      const ready = await deps.gateway.waitForMetaReady(call.metaCallId);
+      if (!ready.ready) throw new AppError("O áudio da Meta não conectou após o aceite da URA.", 502);
       session.call = await updateWaiting(call.metaCallId, {
         status: "ACTIVE", answeredAt: new Date(clock()), ivrState: { phase: "MENU", accepted: true },
       });

@@ -9,7 +9,7 @@ const config = validateConfig({ enabled: true, options: {
   3: { name: "Compras", agentIds: ["155"] },
 } });
 
-function fixture() {
+function fixture({ iceReady = true, metaReady = true } = {}) {
   let now = 100000;
   let call = { metaCallId: "call", channelId: 1, phoneNumberId: "phone", status: "RINGING", channel: { callIvrConfig: config } };
   const events = [], actions = [], digits = [];
@@ -23,7 +23,11 @@ function fixture() {
     },
     gateway: {
       getMetaSession: async () => ({ sdp: "same-answer" }),
-      waitForMetaReady: async () => ({ ready: true }),
+      waitForMetaIce: async () => { actions.push(["ice"]); return { ready: iceReady }; },
+      waitForMetaReady: async () => {
+        assert.ok(actions.some(([action]) => action === "accept"), "DTLS pode concluir apenas depois do aceite");
+        actions.push(["dtls"]); return { ready: metaReady };
+      },
       playIvr: async (_id, menu, prompt) => actions.push(["audio", menu, prompt]),
       getIvr: async () => ({ digits }), closeCall: async () => actions.push(["close"]),
     },
@@ -31,6 +35,7 @@ function fixture() {
       preAcceptCall: async (_phone, _call, sdp) => actions.push(["pre_accept", sdp]),
       acceptCall: async (_phone, _call, sdp) => actions.push(["accept", sdp]),
       terminateCall: async () => actions.push(["terminate"]),
+      rejectCall: async () => actions.push(["reject"]),
     },
     presence: { availableForChannel: () => online, connectionVersion: (id) => versions[id] || 1,
       list: () => online.map((id) => ({ id, online: true })) },
@@ -45,6 +50,7 @@ test("URA toca antes de notificar e encaminha 1 ao Financeiro sem novo aceite", 
   assert.equal(f.events.length, 0);
   const signals = f.actions.filter(([action]) => ["accept", "pre_accept"].includes(action));
   assert.deepEqual(signals, [["pre_accept", "same-answer"], ["accept", "same-answer"]]);
+  assert.deepEqual(f.actions.map(([action]) => action), ["pre_accept", "ice", "accept", "audio", "dtls", "audio"]);
   assert.throws(() => f.ivr.guard(f.call(), { id: "72" }), { status: 403 });
   f.digits.push({ id: 1, digit: "1" });
   await f.ivr.tick("call");
@@ -52,6 +58,24 @@ test("URA toca antes de notificar e encaminha 1 ao Financeiro sem novo aceite", 
   assert.equal(f.events[0].payload.status, "RINGING");
   f.ivr.guard(f.call(), { id: "72" });
   assert.throws(() => f.ivr.guard(f.call(), { id: "116" }), { status: 403 });
+});
+
+test("URA não envia RTP antes do aceite e encerra se o áudio não conectar depois", async () => {
+  const f = fixture({ metaReady: false });
+  await f.ivr.start(f.call(), config);
+  assert.equal(f.call().status, "FAILED");
+  assert.equal(f.actions.some(([action, menu]) => action === "audio" && menu), false);
+  assert.equal(f.actions.filter(([action]) => action === "accept").length, 1);
+  assert.ok(f.actions.findIndex(([action]) => action === "audio") > f.actions.findIndex(([action]) => action === "accept"));
+  assert.equal(f.actions.filter(([action]) => action === "terminate").length, 1);
+  assert.deepEqual(f.ivr.ids(), []);
+});
+
+test("URA rejeita sem aceitar nem iniciar áudio quando ICE não conecta", async () => {
+  const f = fixture({ iceReady: false });
+  await f.ivr.start(f.call(), config);
+  assert.equal(f.actions.some(([action]) => ["accept", "audio"].includes(action)), false);
+  assert.equal(f.actions.filter(([action]) => action === "reject").length, 1);
 });
 
 for (const digit of ["1", "2", "3"]) {
@@ -139,7 +163,7 @@ test("não reativa a chamada se o cliente encerrar durante o aceite da URA", asy
       updateUnclaimed: (id, data) => repo.updateUnclaimed(id, data, db),
       findByMetaCallId: (id) => repo.findByMetaCallId(id, db),
     },
-    gateway: { getMetaSession: async () => ({ sdp: "answer" }), waitForMetaReady: async () => ({ ready: true }),
+    gateway: { getMetaSession: async () => ({ sdp: "answer" }), waitForMetaIce: async () => ({ ready: true }), waitForMetaReady: async () => ({ ready: true }),
       playIvr: async (_id, menu) => { if (menu) menuPlayed = true; } },
     whatsapp: { preAcceptCall: async () => {}, acceptCall: async () => { await repo.update("ended-call", { status: "ENDED" }, db); } },
   });

@@ -164,6 +164,43 @@ func TestWaitPromptReplacesMenuInRunningPlayer(t *testing.T) {
 	}
 }
 
+func TestWaitingAudioDoesNotBlockReadinessDuringDTLSNegotiation(t *testing.T) {
+	g, err := newGateway("127.0.0.1", 40000, 40100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote, err := g.api.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer remote.Close()
+	if _, err = remote.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio); err != nil {
+		t.Fatal(err)
+	}
+	offer, err := remote.CreateOffer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = g.prepareInbound("pending-dtls", offer.SDP); err != nil {
+		t.Fatal(err)
+	}
+	defer g.closeSession("pending-dtls")
+	s, _ := g.session("pending-dtls")
+	// Close the peer first if a regression leaves playback blocked on SRTP.
+	defer s.metaPeer.Close()
+	if err = g.playIvr("pending-dtls", false); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(60 * time.Millisecond)
+	done := make(chan struct{})
+	go func() { _, _ = g.metaReady("pending-dtls"); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("readiness blocked by audio before DTLS connects")
+	}
+}
+
 func TestDTMFEndPacketsDeduplicateWithoutLosingRepeatedKeys(t *testing.T) {
 	s := &callSession{ivrStarted: true}
 	p := &rtp.Packet{Header: rtp.Header{Timestamp: 1200}, Payload: []byte{1, 0x80, 0x10, 0}}

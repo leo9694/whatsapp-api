@@ -123,6 +123,12 @@ func (g *gateway) playIvr(callID string, menu bool, prompt ...string) error {
 				s.mu.Unlock()
 				return
 			}
+			// WriteRTP can block until DTLS connects. Do not hold the session lock
+			// while waiting, as readiness queries need that same lock.
+			if s.metaPeer == nil || s.metaPeer.ConnectionState() != webrtc.PeerConnectionStateConnected {
+				s.mu.Unlock()
+				continue
+			}
 			payload := []byte{0xf8, 0xff, 0xfe} // Opus comfort silence keeps the media leg alive.
 			if s.ivrPlaying && s.metaPeer != nil && s.metaPeer.ConnectionState() == webrtc.PeerConnectionStateConnected {
 				payload = s.ivrPackets[s.ivrCursor]

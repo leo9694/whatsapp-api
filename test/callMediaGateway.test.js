@@ -2,6 +2,23 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const gateway = require("../src/services/callMediaGateway.service");
 
+test("libera aceite com ICE conectado enquanto DTLS ainda negocia", async () => {
+  const response = { ready: false, iceState: "connected", peerState: "connecting" };
+  const options = { timeoutMs: 1000, intervalMs: 1, sleep: async () => {}, check: async () => response };
+  const ice = await gateway.waitForMetaIce("call", options);
+  assert.equal(ice.ready, true);
+  assert.equal(ice.peerState, "connecting");
+  const audio = await gateway.waitForMetaReady("call", { ...options, timeoutMs: 0 });
+  assert.equal(audio.ready, false);
+});
+
+test("ICE conectado com áudio fechado não autoriza aceite", async () => {
+  const result = await gateway.waitForMetaIce("call", {
+    timeoutMs: 0, check: async () => ({ ready: false, iceState: "connected", peerState: "closed" })
+  });
+  assert.equal(result.ready, false);
+});
+
 test("aguarda o primeiro RTP em vez de falhar na primeira consulta", async () => {
   const responses = [
     { ready: false, lastRtpAgeMs: -1, iceState: "checking" },

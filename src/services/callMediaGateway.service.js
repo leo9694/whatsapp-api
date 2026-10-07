@@ -115,8 +115,11 @@ async function waitForMetaReady(callId, options = {}) {
   let consecutive = 0;
   do {
     readiness = await check(callId);
-    consecutive = readiness.ready ? consecutive + 1 : 0;
-    if (consecutive >= requiredConsecutive) return readiness;
+    const ready = options.iceOnly
+      ? ["connected", "completed"].includes(readiness.iceState) && !["failed", "closed"].includes(readiness.peerState)
+      : readiness.ready;
+    consecutive = ready ? consecutive + 1 : 0;
+    if (consecutive >= requiredConsecutive) return { ...readiness, ready: true };
     const remaining = deadline - Date.now();
     if (remaining <= 0) return { ...readiness, ready: false };
     await sleep(Math.min(intervalMs, remaining));
@@ -136,6 +139,7 @@ function closeCall(callId) {
 }
 
 module.exports = {
+  waitForMetaIce: (callId, options = {}) => waitForMetaReady(callId, { ...options, iceOnly: true }),
   ivrCapabilities: () => request("/v1/ivr-capabilities"),
   playIvr, getIvr,
   agentReady, bindOutboundSession, closeCall, createMetaOffer, createOutboundSession,
