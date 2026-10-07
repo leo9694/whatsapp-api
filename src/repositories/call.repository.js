@@ -35,8 +35,15 @@ function findActiveByAgent(agentId, db = prisma) {
   return db.call.findFirst({ where: { currentAgentId: String(agentId), status: { in: ["RINGING", "CONNECTING", "ACTIVE"] } } });
 }
 
+async function updateUnclaimed(metaCallId, data, db = prisma) {
+  const result = await db.call.updateMany({
+    where: { metaCallId, currentAgentId: null, status: { in: ["RINGING", "CONNECTING", "ACTIVE"] } }, data,
+  });
+  return result.count ? findByMetaCallId(metaCallId, db) : null;
+}
+
 function findActiveByConversation(conversationId, db = prisma) {
   return db.call.findFirst({ where: { conversationId, status: { in: ["RINGING", "CONNECTING", "ACTIVE"] } } });
 }
 
-module.exports = { findActiveByAgent, findActiveByConversation, findByMetaCallId, create, update, list };
+module.exports = { updateUnclaimed, findActiveByAgent, findActiveByConversation, findByMetaCallId, create, update, list };

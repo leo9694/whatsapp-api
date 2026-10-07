@@ -57,6 +57,14 @@ function getMetaSession(callId) {
   return request(`/v1/calls/${encodeURIComponent(callId)}/meta-session`);
 }
 
+function playIvr(callId, menu) {
+  return request(`/v1/calls/${encodeURIComponent(callId)}/ivr`, json("POST", { menu }));
+}
+
+function getIvr(callId) {
+  return request(`/v1/calls/${encodeURIComponent(callId)}/ivr`);
+}
+
 function repairMetaSession(callId) {
   return request(`/v1/calls/${encodeURIComponent(callId)}/meta-repair`, { method: "POST" });
 }
@@ -128,6 +136,8 @@ function closeCall(callId) {
 }
 
 module.exports = {
+  ivrCapabilities: () => request("/v1/ivr-capabilities"),
+  playIvr, getIvr,
   agentReady, bindOutboundSession, closeCall, createMetaOffer, createOutboundSession,
   enabled, getMetaSession, joinAgent, prepareInbound, removeAgent, repairMetaSession,
   setCurrentAgent, setMetaAnswer, waitForAgentReady, waitForMetaReady,

@@ -14,6 +14,7 @@ const transferService = require("./callTransfer.service");
 const permissionService = require("./callPermission.service");
 const channelService = require("./whatsappChannel.service");
 const callSessions = require("./callSessionStore");
+const ivr = require("./callIvr.service");
 const { toCallDto } = require("../utils/callDto");
 const { toConversationDto } = require("../utils/conversationDto");
 
@@ -77,6 +78,8 @@ function eventName(status) {
 }
 
 function emitCall(call, { incoming = false, session } = {}) {
+  if (call.ivrState && !call.currentAgentId && !TERMINAL.has(call.status)) return;
+  if (TERMINAL.has(call.status)) ivr.finish(call.metaCallId);
   const dto = toCallDto(call);
   const owner = callSessions.get(dto.callId);
   if (TERMINAL.has(dto.status)) callSessions.remove(dto.callId);
@@ -166,7 +169,10 @@ async function processCallEvent({ call, contacts = [], phoneNumberId, channel, e
         } else if (call.session?.sdp) {
           await (dependencies.setMetaAnswer || mediaGateway.setMetaAnswer)(call.id, call.session.sdp);
         }
-        emitCall(saved, { incoming: callDirection === "INBOUND" });
+        if (callDirection === "INBOUND" && saved.channel?.callIvrConfig?.enabled) {
+          // Start outside the webhook response; API and gateway own the call.
+          void ivr.start(saved, saved.channel.callIvrConfig);
+        } else emitCall(saved, { incoming: callDirection === "INBOUND" });
       } catch (error) {
         saved = await callRepository.update(call.id, {
           status: "FAILED", endReason: "MEDIA_GATEWAY_UNAVAILABLE",
@@ -266,13 +272,17 @@ async function getCallForControl(callId, agent, db) {
   const call = await callRepository.findByMetaCallId(callId, db);
   if (!call) throw new AppError("Chamada não encontrada.", 404);
   if (!agent?.id) throw new AppError("Identificação do atendente ausente.", 401);
+  if (!agent.director && Array.isArray(agent.channelIds) && !agent.channelIds.includes(String(call.channelId))) {
+    throw new AppError("Você não tem acesso ao número desta chamada.", 403);
+  }
+  ivr.guard(call, agent);
   callSessions.assertOwner(callId, agent);
   if (call.currentAgentId && String(call.currentAgentId) !== String(agent.id)) {
     throw new AppError(`Chamada em atendimento por ${call.currentAgentName || "outro atendente"}.`, 403);
   }
   if (call.conversationId) {
     const conversation = await conversationRepository.findById(call.conversationId, db);
-    if (conversation?.assignedUserId && String(conversation.assignedUserId) !== String(agent.id) && !agent.director) {
+    if (!call.ivrState && conversation?.assignedUserId && String(conversation.assignedUserId) !== String(agent.id) && !agent.director) {
       throw new AppError(`Conversa em atendimento por ${conversation.assignedUserName || "outro atendente"}.`, 403);
     }
   }
@@ -333,6 +343,7 @@ async function accept(callId, input, dependencies = {}) {
 async function reject(callId, input, dependencies = {}) {
   const db = dependencies.db || prisma;
   const call = await getCallForControl(callId, input.agent, db);
+  if (call.ivrState?.phase === "QUEUE" && !call.currentAgentId) return ivr.decline(call, input.agent);
   if (call.direction !== "INBOUND") throw new AppError("Somente chamadas recebidas podem ser recusadas.", 409);
   assertState(call, ["RINGING", "CONNECTING"]);
   await (dependencies.rejectCall || whatsappService.rejectCall)(call.phoneNumberId, callId);
@@ -554,7 +565,7 @@ async function joinMedia(callId, input, agent, dependencies = {}) {
       || String(transfer.toAgentId) !== String(agent.id)) {
       throw new AppError("Transferência não autorizada para esta sessão de mídia.", 403);
     }
-  } else if (!["RINGING", "CONNECTING"].includes(call.status) || call.currentAgentId) {
+  } else if ((!["RINGING", "CONNECTING"].includes(call.status) && !(call.status === "ACTIVE" && call.ivrState?.phase === "QUEUE")) || call.currentAgentId) {
     throw new AppError("A chamada não está aguardando um atendente.", 409);
   }
   callSessions.claim(input.transferId ? `${callId}:transfer:${input.transferId}` : callId, agent);
@@ -587,7 +598,8 @@ async function activateMedia(callId, input, agent, dependencies = {}) {
   const call = await getCallForControl(callId, agent, db);
   callSessions.assertOwner(callId, agent);
   if (call.status === "ACTIVE" && String(call.currentAgentId) === String(agent.id)) return toCallDto(call);
-  if (!["RINGING", "CONNECTING"].includes(call.status) || call.currentAgentId) {
+  const fromIvr = call.ivrState?.phase === "QUEUE" && call.ivrState.accepted === true;
+  if ((!["RINGING", "CONNECTING"].includes(call.status) && !fromIvr) || call.currentAgentId) {
     throw new AppError("A chamada não está aguardando ativação de mídia.", 409);
   }
   const gateway = dependencies.mediaGateway || mediaGateway;
@@ -596,25 +608,27 @@ async function activateMedia(callId, input, agent, dependencies = {}) {
     logMediaNotReady("inbound", callId, agent.id, readiness);
     throw new AppError("O áudio do atendente ainda não está pronto.", 409);
   }
-  assertState(await getCallForControl(callId, agent, db), ["RINGING", "CONNECTING"]);
+  assertState(await getCallForControl(callId, agent, db), fromIvr ? ["ACTIVE"] : ["RINGING", "CONNECTING"]);
   let metaSession = await gateway.getMetaSession(callId);
-  if (!metaSession.ready && ["failed", "closed"].includes(metaSession.peerState)) {
+  if (!fromIvr && !metaSession.ready && ["failed", "closed"].includes(metaSession.peerState)) {
     metaSession = await gateway.repairMetaSession(callId);
   }
   let acceptedByMeta = false;
   let preAcceptedByMeta = false;
   try {
-    await (dependencies.preAcceptCall || whatsappService.preAcceptCall)(call.phoneNumberId, callId, metaSession.sdp);
-    preAcceptedByMeta = true;
-    const preAcceptReadiness = await (gateway.waitForMetaReady || gateway.getMetaSession)(callId);
-    if (!preAcceptReadiness.ready) {
-      const error = new AppError("A conexão de áudio com a Meta não foi estabelecida antes do aceite.", 502);
-      error.publicCode = "META_MEDIA_NOT_READY";
-      throw error;
+    if (!fromIvr) {
+      await (dependencies.preAcceptCall || whatsappService.preAcceptCall)(call.phoneNumberId, callId, metaSession.sdp);
+      preAcceptedByMeta = true;
+      const preAcceptReadiness = await (gateway.waitForMetaReady || gateway.getMetaSession)(callId);
+      if (!preAcceptReadiness.ready) {
+        const error = new AppError("A conexão de áudio com a Meta não foi estabelecida antes do aceite.", 502);
+        error.publicCode = "META_MEDIA_NOT_READY";
+        throw error;
+      }
+      assertState(await getCallForControl(callId, agent, db), ["RINGING", "CONNECTING", "ACTIVE"]);
+      await (dependencies.acceptCall || whatsappService.acceptCall)(call.phoneNumberId, callId, metaSession.sdp);
+      acceptedByMeta = true;
     }
-    assertState(await getCallForControl(callId, agent, db), ["RINGING", "CONNECTING", "ACTIVE"]);
-    await (dependencies.acceptCall || whatsappService.acceptCall)(call.phoneNumberId, callId, metaSession.sdp);
-    acceptedByMeta = true;
     const metaReadiness = await (gateway.waitForMetaReady || gateway.getMetaSession)(callId);
     if (!metaReadiness.ready) {
       const error = new AppError("A conexão de áudio com a Meta não foi estabelecida.", 502);
@@ -646,7 +660,9 @@ async function activateMedia(callId, input, agent, dependencies = {}) {
   const updated = await callRepository.update(callId, {
     status: "ACTIVE", answeredAt: call.answeredAt || now,
     currentAgentId: String(agent.id), currentAgentName: agent.name,
+    ...(fromIvr ? { ivrState: { ...call.ivrState, phase: "AGENT" } } : {}),
   }, db);
+  if (fromIvr) ivr.finish(callId);
   presence.markBusy(agent.id, callId);
   socket.joinAgentCall(agent.id, callId);
   const otherAgents = presence.availableIds().filter((id) => String(id) !== String(agent.id));

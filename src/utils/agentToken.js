@@ -38,6 +38,7 @@ function verifyAgentToken(token, secret = process.env.CALL_AGENT_AUTH_SECRET) {
     id: String(payload.sub).slice(0, 64),
     name: String(payload.name).slice(0, 160),
     director: payload.director === true,
+    ...(Array.isArray(payload.channelIds) ? { channelIds: payload.channelIds.map(String) } : {}),
     environment: normalizeEnvironment(payload.environment),
     ...(payload.clientId ? { clientId: String(payload.clientId).slice(0, 128) } : {}),
   };

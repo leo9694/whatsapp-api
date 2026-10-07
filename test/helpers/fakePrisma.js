@@ -36,6 +36,11 @@ function createFakePrisma() {
     state,
     $transaction: (callback) => callback(db),
     whatsAppChannel: {
+      async update({ where, data }) {
+        const item = state.channels.find((channel) => channel.id === where.id);
+        Object.assign(item, data);
+        return { ...item };
+      },
       async findUnique({ where }) {
         const item = state.channels.find((channel) => channel.id === where.id
           || channel.phoneNumberId === where.phoneNumberId);
@@ -210,6 +215,12 @@ function createFakePrisma() {
       },
     },
     call: {
+      async updateMany({ where, data }) {
+        const items = state.calls.filter((call) => call.metaCallId === where.metaCallId
+          && !call.currentAgentId && where.status.in.includes(call.status));
+        items.forEach((item) => Object.assign(item, data, { updatedAt: now() }));
+        return { count: items.length };
+      },
       includeRelations(item, include) {
         const result = { ...item };
         if (include?.contact) result.contact = item.contactId

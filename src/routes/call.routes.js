@@ -4,6 +4,8 @@ const { callActionLimiter, callQueryLimiter } = require("../middleware/rateLimit
 const { requireAgent, requireConfiguredAgent } = require("../middleware/authenticateAgent");
 
 const router = express.Router();
+router.get("/api/channels/:channelId/call-ivr", requireAgent, callQueryLimiter, controller.getIvrConfig);
+router.put("/api/channels/:channelId/call-ivr", requireAgent, callActionLimiter, controller.configureIvr);
 
 router.get("/api/calls", callQueryLimiter, controller.list);
 router.get("/api/call-agents", requireAgent, callQueryLimiter, controller.agents);

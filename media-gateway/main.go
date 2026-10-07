@@ -44,6 +44,13 @@ type callSession struct {
 	currentAgent  string
 	createdAt     time.Time
 	toMetaRTP     rtpContinuity
+	closed        bool
+	ivrStarted    bool
+	ivrPlaying    bool
+	ivrCursor     int
+	ivrLastDigit  string
+	ivrDigitID    uint64
+	ivrDigits     []ivrDigit
 }
 
 // Each browser has an independent RTP clock. Keep one clock/sequence on the
@@ -107,6 +114,10 @@ func newGateway(publicIP string, minPort, maxPort uint16) (*gateway, error) {
 		return nil, err
 	}
 	var registry interceptor.Registry
+	if err = mediaEngine.RegisterCodec(webrtc.RTPCodecParameters{
+		RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: "audio/telephone-event", ClockRate: 8000, SDPFmtpLine: "0-15"},
+		PayloadType: 126,
+	}, webrtc.RTPCodecTypeAudio); err != nil { return nil, err }
 	if err = webrtc.RegisterDefaultInterceptors(&mediaEngine, &registry); err != nil {
 		return nil, err
 	}
@@ -237,6 +248,7 @@ func (g *gateway) closeSession(id string) {
 
 func (s *callSession) close() {
 	s.mu.Lock()
+	s.closed = true
 	agents := make([]*webrtc.PeerConnection, 0, len(s.agents))
 	for _, agent := range s.agents {
 		agents = append(agents, agent.peer)
@@ -259,6 +271,7 @@ func (s *callSession) relayMeta(track *webrtc.TrackRemote) {
 		if err != nil {
 			return
 		}
+		if isTelephoneEvent(track) { s.receiveDigit(packet); continue }
 		s.mu.RLock()
 		targets := make([]*webrtc.TrackLocalStaticRTP, 0, len(s.agents))
 		for _, agent := range s.agents {
@@ -664,6 +677,19 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	var err error
 	switch {
+	case r.Method == "GET" && r.URL.Path == "/v1/ivr-capabilities":
+		writeJSON(w, 200, map[string]bool{"audio": true, "dtmf": true})
+		return
+	case len(parts) == 4 && parts[0] == "v1" && parts[1] == "calls" && parts[3] == "ivr":
+		if r.Method == "POST" {
+			var body struct{ Menu bool }
+			if err = readJSON(w, r, &body); err == nil { err = s.gateway.playIvr(parts[2], body.Menu) }
+			if err == nil { writeJSON(w, 200, map[string]bool{"success": true}); return }
+		} else if r.Method == "GET" {
+			var session *callSession
+			session, err = s.gateway.session(parts[2])
+			if err == nil { writeJSON(w, 200, session.ivrSnapshot()); return }
+		} else { writeJSON(w, 405, map[string]string{"error": "method not allowed"}); return }
 	case r.Method == "POST" && r.URL.Path == "/v1/calls/inbound":
 		var body struct{ CallID, Offer string }
 		if err = readJSON(w, r, &body); err == nil {

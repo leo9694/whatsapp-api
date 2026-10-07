@@ -1,5 +1,6 @@
 const callService = require("../services/call.service");
 const transferService = require("../services/callTransfer.service");
+const ivrService = require("../services/callIvr.service");
 const { success } = require("../utils/apiResponse");
 const { idSchema, agentSchema } = require("../validators/conversation.validator");
 const {
@@ -119,6 +120,17 @@ function transferAction(method) {
 }
 
 module.exports = {
+  async configureIvr(req, res, next) {
+    try { return success(res, await ivrService.configure(idSchema.parse(req.params.channelId), req.body, req.agent)); }
+    catch (error) { return next(error); }
+  },
+  async getIvrConfig(req, res, next) {
+    try {
+      if (!req.agent?.director) throw new (require("../utils/AppError"))("Somente a diretoria pode consultar a URA.", 403);
+      const channel = await require("../repositories/whatsappChannel.repository").findById(idSchema.parse(req.params.channelId));
+      return success(res, channel?.callIvrConfig || { enabled: false });
+    } catch (error) { return next(error); }
+  },
   claim,
   list, listConversation, preAccept, accept, reject, terminate, permission, requestPermission, initiate,
   joinMedia, mediaReady, createOutboundMedia, agents, requestTransfer,

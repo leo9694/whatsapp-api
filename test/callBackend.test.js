@@ -333,6 +333,35 @@ test("encerramento da Meta preserva falha de áudio registrada pela API", async 
   assert.equal(db.state.calls[0].endReason, "META_MEDIA_NOT_READY");
 });
 
+test("atendente conecta a chamada já aceita pela URA sem renegociar ou aceitar novamente na Meta", async () => {
+  const db = createFakePrisma();
+  await createInbound(db);
+  const channel = db.state.channels.find((c) => c.phoneNumberId === PHONE_ID);
+  channel.callIvrConfig = { enabled: true, options: { 1: { agentIds: [agent.id] } } };
+  const presence = require("../src/services/callPresence.service");
+  presence.connect(agent, "ivr-test");
+  Object.assign(db.state.calls[0], { status: "ACTIVE", answeredAt: new Date(),
+    ivrState: { phase: "QUEUE", option: "1", fallback: false, accepted: true } });
+  let routed = false;
+  try {
+    const active = await callService.mediaReady(CALL_ID, {}, agent, {
+      db,
+      mediaGateway: {
+        waitForAgentReady: async () => ({ ready: true }),
+        getMetaSession: async () => ({ ready: true, sdp: ANSWER }),
+        waitForMetaReady: async () => ({ ready: true }),
+        setCurrentAgent: async () => { routed = true; },
+        removeAgent: async () => {},
+      },
+      preAcceptCall: async () => { throw new Error("URA já pré-aceitou"); },
+      acceptCall: async () => { throw new Error("URA já aceitou"); },
+    });
+    assert.equal(active.status, "ACTIVE");
+    assert.equal(active.ivr.phase, "AGENT");
+    assert.equal(routed, true);
+  } finally { presence.reset(); }
+});
+
 test("webhook terminate usa duração oficial e normaliza falha", async () => {
   const db = createFakePrisma();
   await createInbound(db);

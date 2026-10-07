@@ -22,6 +22,7 @@ const { createCorsOptions } = require("./config/frontendOrigins");
 const { initializeSocket } = require("./sockets/socket");
 const prisma = require("./database/prisma");
 const callTransferService = require("./services/callTransfer.service");
+const callIvrService = require("./services/callIvr.service");
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
@@ -53,6 +54,7 @@ function startServer() {
   const server = http.createServer(app);
   initializeSocket(server);
   callTransferService.startExpirationWorker();
+  callIvrService.startWorker();
   server.listen(port, host, () => {
     logger.info("server_started", { host, port });
   });
@@ -63,6 +65,7 @@ async function shutdown(signal, server) {
   logger.info("server_stopping", { signal });
   server.close(async () => {
     callTransferService.stopExpirationWorker();
+    callIvrService.stopWorker();
     await prisma.$disconnect();
     process.exit(0);
   });

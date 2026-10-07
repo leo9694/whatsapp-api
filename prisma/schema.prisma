@@ -80,6 +80,7 @@ model WhatsAppChannel {
   wabaId             String?
   isActive           Boolean          @default(true)
   isDefault          Boolean          @default(false)
+  callIvrConfig      Json?
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
   conversations      Conversation[]
@@ -173,6 +174,7 @@ model Call {
   endedAt         DateTime?
   durationSeconds Int?
   endReason       String?
+  ivrState        Json?
   lastEventAt     DateTime?
   currentAgentId  String?
   currentAgentName String?

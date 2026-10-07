@@ -6,6 +6,8 @@ function connect(agent, socketId) {
   current.name = agent.name;
   current.director = agent.director === true;
   current.sockets.add(socketId);
+  current.connectionVersion = (current.connectionVersion || 0) + 1;
+  current.channelIds = agent.channelIds;
   current.environments.set(socketId, agent.environment || "production");
   current.lastSeenAt = new Date();
   agents.set(id, current);
@@ -55,8 +57,16 @@ function reset() {
   agents.clear();
 }
 
+function availableForChannel(channelId) {
+  return availableIds().filter((id) => {
+    const agent = agents.get(id);
+    return agent.director || !Array.isArray(agent.channelIds) || agent.channelIds.includes(String(channelId));
+  });
+}
+
 function environments(agentId) {
   return [...new Set(agents.get(String(agentId))?.environments.values() || [])];
 }
 
-module.exports = { availableIds, clearBusy, connect, disconnect, environments, get, list, markBusy, reset };
+module.exports = { availableForChannel, connectionVersion: (id) => agents.get(String(id))?.connectionVersion || 0,
+  availableIds, clearBusy, connect, disconnect, environments, get, list, markBusy, reset };
