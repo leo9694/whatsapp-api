@@ -78,6 +78,21 @@ test("entrega eventos de chamada aos ambientes local e production configurados",
   const payloads = await Promise.all(received);
   assert.deepEqual(payloads.map((payload) => payload.callId), ["call-both-envs", "call-both-envs"]);
 
+  const events = [[], []];
+  clients.forEach((client, index) => {
+    client.on("call:outgoing", (payload) => events[index].push(payload.callId));
+    client.on("call:claimed", (payload) => events[index].push(payload.callId));
+  });
+  const localOutgoing = new Promise((resolve) => clients[0].once("call:outgoing", resolve));
+  emitToAgent("72", "call:outgoing", { callId: "local-only" }, "local");
+  await localOutgoing;
+  const claims = clients.map((client) => new Promise((resolve) => client.once("call:claimed", resolve)));
+  // O aviso de posse alcança inclusive um ambiente fora da lista de recebimento.
+  process.env.CALL_DELIVERY_ENVS = "production";
+  emitToAgent("72", "call:claimed", { callId: "claimed-all" });
+  await Promise.all(claims);
+  assert.deepEqual(events, [["local-only", "claimed-all"], ["claimed-all"]]);
+
   clients.forEach((client) => client.close());
   await new Promise((resolve) => io.close(resolve));
   await new Promise((resolve) => server.close(resolve));

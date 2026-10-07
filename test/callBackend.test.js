@@ -73,6 +73,106 @@ test("evento repetido com mesmo call_id e timestamp é idempotente", async () =>
   assert.equal(db.state.calls.length, 1);
 });
 
+test("connect inbound repetido com outro timestamp não prepara novamente o gateway", async () => {
+  const db = createFakePrisma();
+  await createInbound(db);
+  const originalEnabled = process.env.CALL_MEDIA_GATEWAY_ENABLED;
+  process.env.CALL_MEDIA_GATEWAY_ENABLED = "true";
+  let preparations = 0;
+  try {
+    const result = await callService.processCallEvent({
+      call: inboundCall({ timestamp: "1787600001" }), phoneNumberId: PHONE_ID,
+    }, { db, prepareInbound: async () => { preparations += 1; } });
+    assert.equal(result.duplicate, true);
+    assert.equal(preparations, 0);
+    assert.equal(db.state.calls[0].status, "RINGING");
+  } finally {
+    if (originalEnabled === undefined) delete process.env.CALL_MEDIA_GATEWAY_ENABLED;
+    else process.env.CALL_MEDIA_GATEWAY_ENABLED = originalEnabled;
+  }
+});
+
+test("connect e ringing atrasados não reabrem uma chamada ativa ou encerrada", async () => {
+  const db = createFakePrisma();
+  await createInbound(db);
+  await callService.processCallStatus({ status: {
+    id: CALL_ID, type: "call", status: "accepted", timestamp: "1787600002",
+  } }, { db });
+  const ringing = await callService.processCallStatus({ status: {
+    id: CALL_ID, type: "call", status: "ringing", timestamp: "1787600003",
+  } }, { db });
+  assert.equal(ringing.ignored, true);
+  assert.equal((await createInbound(db, inboundCall({ timestamp: "1787600004" }))).call.status, "ACTIVE");
+  await callService.processCallEvent({
+    call: inboundCall({ event: "terminate", timestamp: "1787600005" }), phoneNumberId: PHONE_ID,
+  }, { db });
+  assert.equal((await createInbound(db, inboundCall({ timestamp: "1787600006" }))).call.status, "ENDED");
+  const lateAccepted = await callService.processCallStatus({ status: {
+    id: CALL_ID, type: "call", status: "accepted", timestamp: "1787600007",
+  } }, { db });
+  assert.equal(lateAccepted.call.status, "ENDED");
+});
+
+test("impede dois aceites simultâneos e libera a trava após falha de mídia", async () => {
+  const db = createFakePrisma();
+  await createInbound(db);
+  let resolveReady;
+  const ready = new Promise((resolve) => { resolveReady = resolve; });
+  const pending = callService.mediaReady(CALL_ID, {}, agent, {
+    db, mediaGateway: { waitForAgentReady: () => ready },
+  });
+  await assert.rejects(callService.mediaReady(CALL_ID, {}, agent, { db }), /já está em andamento/);
+  resolveReady({ ready: false });
+  await assert.rejects(pending, /ainda não está pronto/);
+  await assert.rejects(callService.mediaReady(CALL_ID, {}, agent, {
+    db, mediaGateway: { waitForAgentReady: async () => ({ ready: false }) },
+  }), /ainda não está pronto/);
+});
+
+test("não pré-aceita uma chamada encerrada enquanto aguardava o microfone", async () => {
+  const db = createFakePrisma();
+  await createInbound(db);
+  let preAccepted = false;
+  await assert.rejects(callService.mediaReady(CALL_ID, {}, agent, {
+    db,
+    mediaGateway: {
+      waitForAgentReady: async () => {
+        await db.call.update({ where: { metaCallId: CALL_ID }, data: { status: "ENDED" } });
+        return { ready: true };
+      },
+    },
+    preAcceptCall: async () => { preAccepted = true; },
+  }), /estado ENDED/);
+  assert.equal(preAccepted, false);
+  assert.equal(db.state.calls[0].status, "ENDED");
+});
+
+test("repetir media-ready após resposta perdida não aceita novamente a chamada", async () => {
+  const db = createFakePrisma();
+  await createInbound(db);
+  await db.call.update({ where: { metaCallId: CALL_ID }, data: {
+    status: "ACTIVE", currentAgentId: agent.id, currentAgentName: agent.name,
+  } });
+  let accepted = false;
+  const result = await callService.mediaReady(CALL_ID, {}, agent, {
+    db, acceptCall: async () => { accepted = true; },
+  });
+  assert.equal(result.status, "ACTIVE");
+  assert.equal(accepted, false);
+});
+
+test("status recebido no mesmo segundo da criação outbound não é descartado como antigo", async () => {
+  const db = createFakePrisma();
+  await createInbound(db);
+  await db.call.update({ where: { metaCallId: CALL_ID }, data: {
+    direction: "OUTBOUND", status: "CONNECTING", lastEventAt: new Date(1787600001950),
+  } });
+  const result = await callService.processCallStatus({ status: {
+    id: CALL_ID, type: "call", status: "accepted", timestamp: "1787600001",
+  } }, { db });
+  assert.equal(result.status, "ACTIVE");
+});
+
 test("status de chamada da Meta atualiza ringing, active e rejected de forma idempotente", async () => {
   const db = createFakePrisma();
   await createInbound(db);
@@ -289,4 +389,35 @@ test("outbound exige permissão e usa phone_number_id da conversa", async () => 
 
 test("validação rejeita SDP inválido", () => {
   assert.throws(() => answerActionSchema.parse({ session: { sdpType: "answer", sdp: "x" }, agent }));
+});
+
+test("impede nova ligação para conversa que já tem uma chamada chamando", async () => {
+  const db = createFakePrisma();
+  const incoming = await createInbound(db);
+  let contactedMeta = false;
+  await assert.rejects(callService.initiate(incoming.conversationId, { agent }, {
+    db, getCallPermission: async () => { contactedMeta = true; },
+  }), (error) => error.publicCode === "CALL_ALREADY_ACTIVE");
+  assert.equal(contactedMeta, false);
+});
+
+test("impede ligações simultâneas do mesmo atendente antes de consultar a Meta", async () => {
+  const db = createFakePrisma();
+  const { conversation } = await seedConversation(db);
+  let resolvePermission;
+  const reachedPermission = new Promise((resolve) => {
+    const pending = callService.initiate(conversation.id, { agent }, {
+      db, getCallPermission: () => {
+        resolve();
+        return new Promise((done) => { resolvePermission = done; });
+      },
+    });
+    pending.catch(() => {});
+    db.pending = pending;
+  });
+  await reachedPermission;
+  await assert.rejects(callService.initiate(conversation.id, { agent }, { db }),
+    (error) => error.publicCode === "AGENT_BUSY");
+  resolvePermission({ actions: [] });
+  await assert.rejects(db.pending, (error) => error.publicCode === "CALL_PERMISSION_REQUIRED");
 });

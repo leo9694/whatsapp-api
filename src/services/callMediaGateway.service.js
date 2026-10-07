@@ -110,7 +110,7 @@ async function waitForMetaReady(callId, options = {}) {
     consecutive = readiness.ready ? consecutive + 1 : 0;
     if (consecutive >= requiredConsecutive) return readiness;
     const remaining = deadline - Date.now();
-    if (remaining <= 0) return readiness;
+    if (remaining <= 0) return { ...readiness, ready: false };
     await sleep(Math.min(intervalMs, remaining));
   } while (true);
 }

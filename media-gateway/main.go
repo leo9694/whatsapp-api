@@ -329,6 +329,11 @@ func (g *gateway) prepareInbound(callID, offer string) (string, error) {
 		g.closeSession(callID)
 		return "", err
 	}
+	defer func() {
+		if err != nil {
+			_ = peer.Close()
+		}
+	}()
 	if err = peer.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: offer}); err != nil {
 		g.closeSession(callID)
 		return "", err
@@ -357,8 +362,22 @@ func (g *gateway) prepareInbound(callID, offer string) (string, error) {
 }
 
 func (g *gateway) createProvisional(id string) error {
-	_, err := g.newSession(id)
+	session, err := g.newSession(id)
+	if err == nil {
+		time.AfterFunc(5*time.Minute, func() { g.expireProvisional(id, session) })
+	}
 	return err
+}
+
+func (g *gateway) expireProvisional(id string, expected *callSession) {
+	g.mu.Lock()
+	if g.sessions[id] != expected {
+		g.mu.Unlock()
+		return
+	}
+	delete(g.sessions, id)
+	g.mu.Unlock()
+	expected.close()
 }
 
 func (g *gateway) createMetaOffer(sessionID string) (string, error) {
@@ -370,6 +389,11 @@ func (g *gateway) createMetaOffer(sessionID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	defer func() {
+		if err != nil {
+			_ = peer.Close()
+		}
+	}()
 	offer, err := peer.CreateOffer(nil)
 	if err != nil {
 		return "", err
@@ -382,10 +406,14 @@ func (g *gateway) createMetaOffer(sessionID string) (string, error) {
 	}
 	local := sdpWithPtime(peer.LocalDescription().SDP)
 	session.mu.Lock()
+	previous := session.metaPeer
 	session.metaPeer = peer
 	session.toMeta = toMeta
 	session.metaLocalSDP = local
 	session.mu.Unlock()
+	if previous != nil {
+		_ = previous.Close()
+	}
 	return local, nil
 }
 

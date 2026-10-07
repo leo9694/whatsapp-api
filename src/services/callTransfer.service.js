@@ -6,6 +6,7 @@ const mediaGateway = require("./callMediaGateway.service");
 const presence = require("./callPresence.service");
 const socket = require("../sockets/socket");
 const logger = require("../utils/logger");
+const callSessions = require("./callSessionStore");
 
 const OPEN_STATUSES = ["PENDING", "ACCEPTED"];
 let expirationTimer;
@@ -47,6 +48,7 @@ function assertActor(transfer, actor, role) {
 }
 
 async function requestTransfer(metaCallId, targetAgentId, actor, dependencies = {}) {
+  callSessions.assertOwner(metaCallId, actor);
   const db = dependencies.db || prisma;
   const targetId = String(targetAgentId);
   const call = await callRepository.findByMetaCallId(metaCallId, db);
@@ -94,11 +96,12 @@ async function acceptTransfer(metaCallId, transferId, actor, dependencies = {}) 
     await transferRepository.transition(transfer.id, OPEN_STATUSES, { status: "EXPIRED" }, db);
     throw appError("A solicitação de transferência expirou.", 409, "TRANSFER_EXPIRED");
   }
+  const owner = callSessions.claim(`${metaCallId}:transfer:${transferId}`, actor);
   const changed = await transferRepository.transition(transfer.id, ["PENDING"], {
     status: "ACCEPTED", acceptedAt: new Date(),
   }, db);
   if (changed.count !== 1) throw appError("A transferência já foi respondida.", 409, "TRANSFER_NOT_PENDING");
-  const payload = { ...transferDto(transfer), status: "ACCEPTED" };
+  const payload = { ...transferDto(transfer), status: "ACCEPTED", clientId: owner.clientId, environment: owner.environment };
   const socketServer = dependencies.socket || socket;
   socketServer.joinAgentCall?.(transfer.toAgentId, metaCallId);
   socketServer.emitToAgents(
@@ -108,6 +111,7 @@ async function acceptTransfer(metaCallId, transferId, actor, dependencies = {}) 
 }
 
 async function rejectTransfer(metaCallId, transferId, actor, dependencies = {}) {
+  callSessions.assertOwner(`${metaCallId}:transfer:${transferId}`, actor);
   const db = dependencies.db || prisma;
   const transfer = await transferRepository.findById(transferId, db);
   if (!transfer || transfer.call.metaCallId !== metaCallId) throw new AppError("Transferência não encontrada.", 404);
@@ -116,6 +120,7 @@ async function rejectTransfer(metaCallId, transferId, actor, dependencies = {}) 
     status: "REJECTED", rejectedAt: new Date(),
   }, db);
   if (changed.count !== 1) throw appError("A transferência já foi finalizada.", 409, "TRANSFER_CLOSED");
+  callSessions.remove(`${metaCallId}:transfer:${transferId}`);
   await (dependencies.mediaGateway || mediaGateway).removeAgent(metaCallId, transfer.toAgentId).catch(() => {});
   presence.clearBusy(transfer.toAgentId, metaCallId);
   const payload = { ...transferDto(transfer), status: "REJECTED" };
@@ -128,6 +133,7 @@ async function rejectTransfer(metaCallId, transferId, actor, dependencies = {}) 
 }
 
 async function cancelTransfer(metaCallId, transferId, actor, dependencies = {}) {
+  callSessions.assertOwner(metaCallId, actor);
   const db = dependencies.db || prisma;
   const transfer = await transferRepository.findById(transferId, db);
   if (!transfer || transfer.call.metaCallId !== metaCallId) throw new AppError("Transferência não encontrada.", 404);
@@ -136,6 +142,7 @@ async function cancelTransfer(metaCallId, transferId, actor, dependencies = {}) 
     status: "CANCELLED", cancelledAt: new Date(),
   }, db);
   if (changed.count !== 1) throw appError("A transferência já foi finalizada.", 409, "TRANSFER_CLOSED");
+  callSessions.remove(`${metaCallId}:transfer:${transferId}`);
   await (dependencies.mediaGateway || mediaGateway).removeAgent(metaCallId, transfer.toAgentId).catch(() => {});
   presence.clearBusy(transfer.toAgentId, metaCallId);
   const payload = { ...transferDto(transfer), status: "CANCELLED" };
@@ -148,6 +155,7 @@ async function cancelTransfer(metaCallId, transferId, actor, dependencies = {}) 
 }
 
 async function completeTransfer(metaCallId, transferId, actor, dependencies = {}) {
+  callSessions.assertOwner(`${metaCallId}:transfer:${transferId}`, actor);
   const db = dependencies.db || prisma;
   const gateway = dependencies.mediaGateway || mediaGateway;
   const transfer = await transferRepository.findById(transferId, db);
@@ -195,13 +203,16 @@ async function completeTransfer(metaCallId, transferId, actor, dependencies = {}
     throw error;
   }
   await gateway.removeAgent(metaCallId, transfer.fromAgentId).catch(() => {});
+  const sourceSession = callSessions.get(metaCallId);
+  callSessions.claim(`${metaCallId}:transfer:${transferId}`, actor);
+  callSessions.move(`${metaCallId}:transfer:${transferId}`, metaCallId);
   presence.clearBusy(transfer.fromAgentId, metaCallId);
   presence.markBusy(transfer.toAgentId, metaCallId);
   const payload = { ...transferDto(transfer), status: "COMPLETED", completedAt: now.toISOString() };
   const socketServer = dependencies.socket || socket;
   socketServer.leaveAgentCall?.(transfer.fromAgentId, metaCallId);
-  socketServer.emitToAgent(transfer.fromAgentId, "call:transferred:away", payload);
-  socketServer.emitToAgent(transfer.toAgentId, "call:transfer:completed", payload);
+  socketServer.emitToAgent(transfer.fromAgentId, "call:transferred:away", payload, sourceSession?.environment);
+  socketServer.emitToAgent(transfer.toAgentId, "call:transfer:completed", payload, actor.environment);
   return payload;
 }
 
@@ -212,6 +223,7 @@ async function expireDueTransfers(dependencies = {}) {
   for (const transfer of expired) {
     const changed = await transferRepository.transition(transfer.id, OPEN_STATUSES, { status: "EXPIRED" }, db);
     if (changed.count !== 1) continue;
+    callSessions.remove(`${transfer.call.metaCallId}:transfer:${transfer.id}`);
     await gateway.removeAgent(transfer.call.metaCallId, transfer.toAgentId).catch(() => {});
     presence.clearBusy(transfer.toAgentId, transfer.call.metaCallId);
     const payload = { ...transferDto(transfer), status: "EXPIRED" };

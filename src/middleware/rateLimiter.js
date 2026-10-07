@@ -1,4 +1,10 @@
-const { rateLimit } = require("express-rate-limit");
+const { rateLimit, ipKeyGenerator } = require("express-rate-limit");
+
+function callRateLimitKey(req) {
+  return req.agent
+    ? `call:${req.agent.environment || "production"}:${req.agent.id}`
+    : ipKeyGenerator(req.ip);
+}
 
 const messageSendLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -17,6 +23,7 @@ const mediaDownloadLimiter = rateLimit({
 });
 
 const callActionLimiter = rateLimit({
+  keyGenerator: callRateLimitKey,
   windowMs: 60 * 1000,
   limit: 30,
   standardHeaders: "draft-8",
@@ -25,6 +32,7 @@ const callActionLimiter = rateLimit({
 });
 
 const callQueryLimiter = rateLimit({
+  keyGenerator: callRateLimitKey,
   windowMs: 60 * 1000,
   limit: 120,
   standardHeaders: "draft-8",
@@ -32,4 +40,4 @@ const callQueryLimiter = rateLimit({
   message: { success: false, error: { code: "RATE_LIMITED", message: "Limite temporário de consultas de chamada excedido." } },
 });
 
-module.exports = { messageSendLimiter, mediaDownloadLimiter, callActionLimiter, callQueryLimiter };
+module.exports = { messageSendLimiter, mediaDownloadLimiter, callActionLimiter, callQueryLimiter, callRateLimitKey };

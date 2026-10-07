@@ -32,7 +32,11 @@ function list({ where, skip, take }, db = prisma) {
 }
 
 function findActiveByAgent(agentId, db = prisma) {
-  return db.call.findFirst({ where: { currentAgentId: String(agentId), status: "ACTIVE" } });
+  return db.call.findFirst({ where: { currentAgentId: String(agentId), status: { in: ["RINGING", "CONNECTING", "ACTIVE"] } } });
 }
 
-module.exports = { findActiveByAgent, findByMetaCallId, create, update, list };
+function findActiveByConversation(conversationId, db = prisma) {
+  return db.call.findFirst({ where: { conversationId, status: { in: ["RINGING", "CONNECTING", "ACTIVE"] } } });
+}
+
+module.exports = { findActiveByAgent, findActiveByConversation, findByMetaCallId, create, update, list };

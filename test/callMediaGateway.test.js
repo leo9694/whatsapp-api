@@ -55,3 +55,11 @@ test("exige estabilidade da perna Meta antes de liberar o áudio", async () => {
   assert.equal(result.ready, true);
   assert.equal(checks, 5);
 });
+
+test("não considera pronta a perna Meta que conecta apenas no fim do prazo", async () => {
+  const result = await gateway.waitForMetaReady("call", {
+    timeoutMs: 0,
+    check: async () => ({ ready: true, peerState: "connected" }),
+  });
+  assert.equal(result.ready, false);
+});

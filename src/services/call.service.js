@@ -13,10 +13,23 @@ const presence = require("./callPresence.service");
 const transferService = require("./callTransfer.service");
 const permissionService = require("./callPermission.service");
 const channelService = require("./whatsappChannel.service");
+const callSessions = require("./callSessionStore");
 const { toCallDto } = require("../utils/callDto");
 const { toConversationDto } = require("../utils/conversationDto");
 
 const CONTROLLABLE = new Set(["RINGING", "CONNECTING", "ACTIVE"]);
+const TERMINAL = new Set(["ENDED", "MISSED", "FAILED", "REJECTED", "BUSY"]);
+const mediaActivations = new Set();
+const mediaAgents = new Set();
+const outgoingAgents = new Set();
+const outgoingConversations = new Set();
+
+function busyError(code) {
+  const error = new AppError(code === "AGENT_BUSY"
+    ? "Você já está em outra chamada." : "Já existe uma chamada ativa para esta conversa.", 409);
+  error.publicCode = code;
+  return error;
+}
 
 function logMediaNotReady(stage, callId, agentId, readiness = {}) {
   logger.warn("call_agent_media_not_ready", {
@@ -65,11 +78,16 @@ function eventName(status) {
 
 function emitCall(call, { incoming = false, session } = {}) {
   const dto = toCallDto(call);
+  const owner = callSessions.get(dto.callId);
+  if (TERMINAL.has(dto.status)) callSessions.remove(dto.callId);
   if (mediaGateway.enabled()) {
-    const targets = dto.currentAgent?.id ? [dto.currentAgent.id] : presence.availableIds();
+    const targets = TERMINAL.has(dto.status)
+      ? presence.list().filter((agent) => agent.online).map((agent) => agent.id)
+      : dto.currentAgent?.id ? [dto.currentAgent.id] : presence.availableIds();
     if (incoming) socket.emitToAgents(targets, "call:incoming", dto);
-    socket.emitToAgents(targets, eventName(dto.status), dto);
-    socket.emitToAgents(targets, "call:updated", dto);
+    const environment = TERMINAL.has(dto.status) ? undefined : owner?.environment;
+    socket.emitToAgents(targets, eventName(dto.status), dto, environment);
+    socket.emitToAgents(targets, "call:updated", dto, environment);
     return;
   }
   if (incoming) socket.emit("call:incoming", dto);
@@ -109,6 +127,13 @@ async function processCallEvent({ call, contacts = [], phoneNumberId, channel, e
   if (!["connect", "terminate"].includes(call.event)) return { ignored: true, reason: "unsupported_call_event" };
   const existing = await callRepository.findByMetaCallId(call.id, db);
   const eventAt = parseTimestamp(call.timestamp);
+  if (existing && call.event === "connect" && (TERMINAL.has(existing.status)
+    || existing.status === "ACTIVE")) {
+    return { ignored: true, reason: "stale_call_event", call: toCallDto(existing) };
+  }
+  if (existing?.direction === "INBOUND" && call.event === "connect") {
+    return { duplicate: true, call: toCallDto(existing) };
+  }
   if (existing?.lastEventAt && existing.lastEventAt.getTime() === eventAt.getTime()
     && ((call.event === "connect" && ["RINGING", "CONNECTING"].includes(existing.status))
       || (call.event === "terminate" && ["ENDED", "MISSED", "FAILED", "REJECTED", "BUSY"].includes(existing.status)))) {
@@ -212,6 +237,11 @@ async function processCallStatus({ status, phoneNumberId }, dependencies = {}) {
   const mapped = { RINGING: "RINGING", ACCEPTED: "ACTIVE", REJECTED: "REJECTED" }[String(status.status).toUpperCase()];
   if (!mapped) return { ignored: true, reason: "unsupported_call_status" };
   const eventAt = parseTimestamp(status.timestamp);
+  if (TERMINAL.has(existing.status) || (existing.lastEventAt
+    && Math.floor(eventAt.getTime() / 1000) < Math.floor(existing.lastEventAt.getTime() / 1000))
+    || (existing.status === "ACTIVE" && mapped === "RINGING")) {
+    return { ignored: true, reason: "stale_call_status", call: toCallDto(existing) };
+  }
   if (existing.status === mapped && existing.lastEventAt?.getTime() === eventAt.getTime()) {
     return { duplicate: true, call: toCallDto(existing) };
   }
@@ -236,6 +266,7 @@ async function getCallForControl(callId, agent, db) {
   const call = await callRepository.findByMetaCallId(callId, db);
   if (!call) throw new AppError("Chamada não encontrada.", 404);
   if (!agent?.id) throw new AppError("Identificação do atendente ausente.", 401);
+  callSessions.assertOwner(callId, agent);
   if (call.currentAgentId && String(call.currentAgentId) !== String(agent.id)) {
     throw new AppError(`Chamada em atendimento por ${call.currentAgentName || "outro atendente"}.`, 403);
   }
@@ -246,6 +277,19 @@ async function getCallForControl(callId, agent, db) {
     }
   }
   return call;
+}
+
+async function claimCall(callId, agent, dependencies = {}) {
+  const call = await getCallForControl(callId, agent, dependencies.db || prisma);
+  assertState(call, ["RINGING", "CONNECTING", "ACTIVE"]);
+  const owner = callSessions.claim(callId, agent);
+  const targets = presence.list().filter((item) => item.online).map((item) => item.id);
+  socket.emitToAgents(targets, "call:claimed", {
+    callId, conversationId: call.conversationId, channel: toCallDto(call).channel,
+    attendant: { id: owner.id, name: owner.name }, clientId: owner.clientId,
+    environment: owner.environment, claimedAt: owner.claimedAt,
+  });
+  return owner;
 }
 
 function assertState(call, allowed) {
@@ -298,6 +342,7 @@ async function reject(callId, input, dependencies = {}) {
   signalStore.remove(callId);
   if (mediaGateway.enabled()) {
     await (dependencies.closeMediaCall || mediaGateway.closeCall)(callId).catch(() => {});
+    if (call.currentAgentId) presence.clearBusy(call.currentAgentId, callId);
     await transferService.cancelForEndedCall(updated, { db });
     socket.closeCallRoom(callId);
   }
@@ -419,8 +464,25 @@ async function requestPermission(conversationId, input, dependencies = {}) {
 }
 
 async function initiate(conversationId, input, dependencies = {}) {
+  const agentId = String(input.agent?.id || "");
+  const conversationKey = String(conversationId);
+  if (outgoingAgents.has(agentId) || mediaAgents.has(agentId)) throw busyError("AGENT_BUSY");
+  if (outgoingConversations.has(conversationKey)) throw busyError("CALL_ALREADY_ACTIVE");
+  outgoingAgents.add(agentId);
+  outgoingConversations.add(conversationKey);
+  try {
+    return await initiateOutgoing(conversationId, input, dependencies);
+  } finally {
+    outgoingAgents.delete(agentId);
+    outgoingConversations.delete(conversationKey);
+  }
+}
+
+async function initiateOutgoing(conversationId, input, dependencies = {}) {
   const db = dependencies.db || prisma;
   const { conversation, phoneNumberId } = await conversationForCalling(conversationId, input.agent, db);
+  if (await callRepository.findActiveByAgent(input.agent.id, db)) throw busyError("AGENT_BUSY");
+  if (await callRepository.findActiveByConversation(conversation.id, db)) throw busyError("CALL_ALREADY_ACTIVE");
   const permission = await (dependencies.getCallPermission || whatsappService.getCallPermission)(
     phoneNumberId, conversation.contact.waId,
   );
@@ -437,6 +499,7 @@ async function initiate(conversationId, input, dependencies = {}) {
   let offer = input.session?.sdp;
   if (mediaGateway.enabled()) {
     if (!input.mediaSessionId) throw new AppError("Sessão de mídia outbound obrigatória.", 400);
+    callSessions.assertOwner(input.mediaSessionId, input.agent);
     const waitForReady = dependencies.waitForAgentReady || mediaGateway.waitForAgentReady;
     const readiness = await waitForReady(input.mediaSessionId, input.agent.id);
     if (!readiness.ready) {
@@ -453,7 +516,9 @@ async function initiate(conversationId, input, dependencies = {}) {
   if (!callId) throw new AppError("A Meta não retornou o ID da chamada.", 502);
   if (mediaGateway.enabled()) {
     await (dependencies.bindOutboundSession || mediaGateway.bindOutboundSession)(input.mediaSessionId, callId);
+    callSessions.move(input.mediaSessionId, callId);
   }
+  callSessions.claim(callId, input.agent);
   const now = new Date();
   const saved = await callRepository.create({
     metaCallId: callId,
@@ -469,7 +534,7 @@ async function initiate(conversationId, input, dependencies = {}) {
     startedAt: now,
     lastEventAt: now,
   }, db);
-  socket.emitToAgent(input.agent.id, "call:outgoing", toCallDto(saved));
+  socket.emitToAgent(input.agent.id, "call:outgoing", toCallDto(saved), input.agent.environment);
   emitCall(saved);
   presence.markBusy(input.agent.id, callId);
   socket.joinAgentCall(input.agent.id, callId);
@@ -492,16 +557,36 @@ async function joinMedia(callId, input, agent, dependencies = {}) {
   } else if (!["RINGING", "CONNECTING"].includes(call.status) || call.currentAgentId) {
     throw new AppError("A chamada não está aguardando um atendente.", 409);
   }
+  callSessions.claim(input.transferId ? `${callId}:transfer:${input.transferId}` : callId, agent);
   const media = await (dependencies.joinAgent || mediaGateway.joinAgent)(callId, agent, input.session.sdp);
   return { callId, transferId: input.transferId || null, session: { sdpType: "answer", sdp: media.answer } };
 }
 
 async function mediaReady(callId, input, agent, dependencies = {}) {
+  if (mediaActivations.has(callId)) throw new AppError("A ativação de áudio desta chamada já está em andamento.", 409);
+  const agentId = String(agent?.id || "");
+  if (outgoingAgents.has(agentId) || mediaAgents.has(agentId)) throw busyError("AGENT_BUSY");
+  mediaActivations.add(callId);
+  mediaAgents.add(agentId);
+  try {
+    return await activateMedia(callId, input, agent, dependencies);
+  } finally {
+    mediaActivations.delete(callId);
+    mediaAgents.delete(agentId);
+  }
+}
+
+async function activateMedia(callId, input, agent, dependencies = {}) {
   const db = dependencies.db || prisma;
+  const active = await callRepository.findActiveByAgent(agent.id, db);
+  if (active && active.metaCallId !== callId) throw busyError("AGENT_BUSY");
   if (input.transferId) {
+    callSessions.assertOwner(`${callId}:transfer:${input.transferId}`, agent);
     return transferService.completeTransfer(callId, input.transferId, agent, { db, ...dependencies });
   }
   const call = await getCallForControl(callId, agent, db);
+  callSessions.assertOwner(callId, agent);
+  if (call.status === "ACTIVE" && String(call.currentAgentId) === String(agent.id)) return toCallDto(call);
   if (!["RINGING", "CONNECTING"].includes(call.status) || call.currentAgentId) {
     throw new AppError("A chamada não está aguardando ativação de mídia.", 409);
   }
@@ -511,6 +596,7 @@ async function mediaReady(callId, input, agent, dependencies = {}) {
     logMediaNotReady("inbound", callId, agent.id, readiness);
     throw new AppError("O áudio do atendente ainda não está pronto.", 409);
   }
+  assertState(await getCallForControl(callId, agent, db), ["RINGING", "CONNECTING"]);
   let metaSession = await gateway.getMetaSession(callId);
   if (!metaSession.ready) {
     metaSession = await gateway.repairMetaSession(callId);
@@ -526,6 +612,7 @@ async function mediaReady(callId, input, agent, dependencies = {}) {
       error.publicCode = "META_MEDIA_NOT_READY";
       throw error;
     }
+    assertState(await getCallForControl(callId, agent, db), ["RINGING", "CONNECTING", "ACTIVE"]);
     await (dependencies.acceptCall || whatsappService.acceptCall)(call.phoneNumberId, callId, metaSession.sdp);
     acceptedByMeta = true;
     const metaReadiness = await (gateway.waitForMetaReady || gateway.getMetaSession)(callId);
@@ -535,9 +622,11 @@ async function mediaReady(callId, input, agent, dependencies = {}) {
       throw error;
     }
     await gateway.setCurrentAgent(callId, agent.id);
+    assertState(await getCallForControl(callId, agent, db), ["RINGING", "CONNECTING", "ACTIVE"]);
   } catch (error) {
     await gateway.removeAgent(callId, agent.id).catch(() => {});
-    if (preAcceptedByMeta) {
+    const latest = await callRepository.findByMetaCallId(callId, db);
+    if (preAcceptedByMeta && !TERMINAL.has(latest?.status)) {
       const closeMetaCall = acceptedByMeta
         ? (dependencies.terminateCall || whatsappService.terminateCall)
         : (dependencies.rejectCall || whatsappService.rejectCall);
@@ -565,6 +654,7 @@ async function mediaReady(callId, input, agent, dependencies = {}) {
     callId,
     conversationId: updated.conversationId,
     attendant: { id: String(agent.id), name: agent.name },
+    channel: toCallDto(updated).channel,
     claimedAt: now.toISOString(),
   });
   emitCall(updated);
@@ -578,9 +668,11 @@ async function createOutboundMedia(conversationId, input, agent, dependencies = 
   const gateway = dependencies.mediaGateway || mediaGateway;
   const mediaSessionId = await gateway.createOutboundSession();
   try {
+    callSessions.claim(mediaSessionId, agent, 5 * 60 * 1000);
     const media = await gateway.joinAgent(mediaSessionId, agent, input.session.sdp);
     return { mediaSessionId, session: { sdpType: "answer", sdp: media.answer } };
   } catch (error) {
+    callSessions.remove(mediaSessionId);
     await gateway.closeCall(mediaSessionId).catch(() => {});
     throw error;
   }
@@ -600,6 +692,7 @@ async function listAgents(db = prisma) {
 }
 
 module.exports = {
+  claimCall,
   processCallEvent, processCallStatus, preAccept, accept, reject, terminate, listCalls,
   getPermission, requestPermission, initiate, joinMedia, mediaReady, createOutboundMedia,
   listAgents, parseTimestamp,

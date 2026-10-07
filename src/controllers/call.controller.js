@@ -73,6 +73,11 @@ async function joinMedia(req, res, next) {
   } catch (error) { return next(error); }
 }
 
+async function claim(req, res, next) {
+  try { return success(res, await callService.claimCall(callIdSchema.parse(req.params.callId), req.agent)); }
+  catch (error) { return next(error); }
+}
+
 async function mediaReady(req, res, next) {
   try {
     return success(res, await callService.mediaReady(
@@ -114,6 +119,7 @@ function transferAction(method) {
 }
 
 module.exports = {
+  claim,
   list, listConversation, preAccept, accept, reject, terminate, permission, requestPermission, initiate,
   joinMedia, mediaReady, createOutboundMedia, agents, requestTransfer,
   acceptTransfer: transferAction("acceptTransfer"),

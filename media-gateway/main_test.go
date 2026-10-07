@@ -83,6 +83,41 @@ func TestSessionBindPreservesSession(t *testing.T) {
 	}
 }
 
+func TestExpireProvisionalDiscardsAbandonedSession(t *testing.T) {
+	g := &gateway{sessions: make(map[string]*callSession)}
+	session, err := g.newSession("temporary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.expireProvisional("temporary", session)
+	if _, err = g.session("temporary"); err == nil {
+		t.Fatal("abandoned provisional session must be removed")
+	}
+}
+
+func TestExpireProvisionalPreservesBoundAndReplacementSessions(t *testing.T) {
+	g := &gateway{sessions: make(map[string]*callSession)}
+	session, err := g.newSession("temporary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = g.bind("temporary", "call-active"); err != nil {
+		t.Fatal(err)
+	}
+	g.expireProvisional("temporary", session)
+	if current, err := g.session("call-active"); err != nil || current != session {
+		t.Fatal("expiration must preserve the bound call")
+	}
+	replacement, err := g.newSession("temporary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.expireProvisional("temporary", session)
+	if current, err := g.session("temporary"); err != nil || current != replacement {
+		t.Fatal("expiration must preserve a replacement session")
+	}
+}
+
 func TestConcurrentCallsUseIsolatedSessions(t *testing.T) {
 	g := &gateway{sessions: make(map[string]*callSession)}
 	first, err := g.newSession("call-channel-a")

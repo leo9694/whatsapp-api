@@ -41,7 +41,10 @@ async function seedActiveCall(db) {
   return call;
 }
 
-test.beforeEach(() => presence.reset());
+test.beforeEach(() => {
+  presence.reset();
+  require("../src/services/callSessionStore").remove(CALL_ID);
+});
 
 test("A solicita transferência e somente B recebe o evento privado", async () => {
   const db = createFakePrisma();

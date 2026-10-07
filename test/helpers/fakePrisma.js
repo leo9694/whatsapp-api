@@ -242,7 +242,9 @@ function createFakePrisma() {
       async findFirst({ where }) {
         const item = state.calls.find((call) => {
           if (where.currentAgentId && call.currentAgentId !== where.currentAgentId) return false;
-          if (where.status && call.status !== where.status) return false;
+          if (where.conversationId && call.conversationId !== where.conversationId) return false;
+          if (where.status?.in && !where.status.in.includes(call.status)) return false;
+          if (typeof where.status === "string" && call.status !== where.status) return false;
           return true;
         });
         return item ? { ...item } : null;

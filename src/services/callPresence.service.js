@@ -2,10 +2,11 @@ const agents = new Map();
 
 function connect(agent, socketId) {
   const id = String(agent.id);
-  const current = agents.get(id) || { id, name: agent.name, sockets: new Set(), calls: new Set() };
+  const current = agents.get(id) || { id, name: agent.name, sockets: new Set(), calls: new Set(), environments: new Map() };
   current.name = agent.name;
   current.director = agent.director === true;
   current.sockets.add(socketId);
+  current.environments.set(socketId, agent.environment || "production");
   current.lastSeenAt = new Date();
   agents.set(id, current);
 }
@@ -14,6 +15,7 @@ function disconnect(agentId, socketId) {
   const current = agents.get(String(agentId));
   if (!current) return;
   current.sockets.delete(socketId);
+  current.environments.delete(socketId);
   current.lastSeenAt = new Date();
 }
 
@@ -53,4 +55,8 @@ function reset() {
   agents.clear();
 }
 
-module.exports = { availableIds, clearBusy, connect, disconnect, get, list, markBusy, reset };
+function environments(agentId) {
+  return [...new Set(agents.get(String(agentId))?.environments.values() || [])];
+}
+
+module.exports = { availableIds, clearBusy, connect, disconnect, environments, get, list, markBusy, reset };

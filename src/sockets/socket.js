@@ -8,7 +8,7 @@ const presence = require("../services/callPresence.service");
 let io;
 
 function deliveryEnvironments() {
-  const configured = String(process.env.CALL_DELIVERY_ENVS || process.env.CALL_DELIVERY_ENV || "production")
+  const configured = String(process.env.CALL_DELIVERY_ENVS || process.env.CALL_DELIVERY_ENV || "local,production")
     .split(",")
     .map((value) => normalizeEnvironment(value))
     .filter(Boolean);
@@ -54,15 +54,19 @@ function emit(event, payload) {
   if (io) io.emit(event, payload);
 }
 
-function emitToAgent(agentId, event, payload) {
+function emitToAgent(agentId, event, payload, environment) {
   if (!io || !agentId) return;
-  deliveryEnvironments().forEach((environment) => {
-    io.to(agentRoom(agentId, environment)).emit(event, payload);
+  const allSessions = event === "call:claimed" || ["call:ended", "call:failed", "call:rejected"].includes(event)
+    || (event === "call:updated" && ["ENDED", "MISSED", "FAILED", "REJECTED", "BUSY"].includes(payload?.status));
+  const targets = environment ? [environment] : allSessions
+    ? [...new Set([...deliveryEnvironments(), ...presence.environments(agentId)])] : deliveryEnvironments();
+  targets.forEach((target) => {
+    io.to(agentRoom(agentId, target)).emit(event, payload);
   });
 }
 
-function emitToAgents(agentIds, event, payload) {
-  [...new Set((agentIds || []).map(String))].forEach((agentId) => emitToAgent(agentId, event, payload));
+function emitToAgents(agentIds, event, payload, environment) {
+  [...new Set((agentIds || []).map(String))].forEach((agentId) => emitToAgent(agentId, event, payload, environment));
 }
 
 function joinAgentCall(agentId, callId) {

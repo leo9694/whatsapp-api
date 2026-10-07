@@ -7,6 +7,7 @@ const router = express.Router();
 
 router.get("/api/calls", callQueryLimiter, controller.list);
 router.get("/api/call-agents", requireAgent, callQueryLimiter, controller.agents);
+router.post("/api/calls/:callId/claim", requireAgent, callActionLimiter, controller.claim);
 router.post("/api/calls/:callId/media", requireAgent, callActionLimiter, controller.joinMedia);
 router.post("/api/calls/:callId/media-ready", requireAgent, callActionLimiter, controller.mediaReady);
 router.post("/api/calls/:callId/transfer", requireAgent, callActionLimiter, controller.requestTransfer);

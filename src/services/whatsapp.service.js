@@ -71,6 +71,7 @@ function graphUrl(phoneNumberId, edge) {
 async function sendCallAction(phoneNumberId, payload) {
   return (await graphRequest(graphUrl(phoneNumberId, "calls"), {
     method: "POST",
+    signal: AbortSignal.timeout(30000),
     body: JSON.stringify({ messaging_product: "whatsapp", ...payload }),
   })).data;
 }
@@ -111,12 +112,15 @@ function initiateCall(phoneNumberId, to, sdp, callbackData) {
 
 async function getCallPermission(phoneNumberId, waId) {
   const query = new URLSearchParams({ user_wa_id: waId });
-  return (await graphRequest(`${graphUrl(phoneNumberId, "call_permissions")}?${query}`)).data;
+  return (await graphRequest(`${graphUrl(phoneNumberId, "call_permissions")}?${query}`, {
+    signal: AbortSignal.timeout(30000),
+  })).data;
 }
 
 async function requestCallPermission(phoneNumberId, to, body) {
   return (await graphRequest(graphUrl(phoneNumberId, "messages"), {
     method: "POST",
+    signal: AbortSignal.timeout(30000),
     body: JSON.stringify({
       messaging_product: "whatsapp",
       recipient_type: "individual",

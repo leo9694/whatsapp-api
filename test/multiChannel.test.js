@@ -121,6 +121,11 @@ test("Calling inbound e outbound mantém phone_number_id e canal corretos", asyn
   assert.equal(second.channel.phoneNumberId, SECOND_ID);
   assert.notEqual(main.conversationId, second.conversationId);
 
+  await callService.processCallEvent({
+    call: { ...baseCall, id: "wacid.second", event: "terminate", timestamp: "1787800002" },
+    contacts, phoneNumberId: SECOND_ID,
+  }, { db });
+
   const initiated = [];
   const outbound = await callService.initiate(second.conversationId, {
     agent: AGENT, session: { sdpType: "offer", sdp: "v=0\r\n" },
