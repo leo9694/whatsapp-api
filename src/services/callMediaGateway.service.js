@@ -57,8 +57,8 @@ function getMetaSession(callId) {
   return request(`/v1/calls/${encodeURIComponent(callId)}/meta-session`);
 }
 
-function playIvr(callId, menu) {
-  return request(`/v1/calls/${encodeURIComponent(callId)}/ivr`, json("POST", { menu }));
+function playIvr(callId, menu, prompt) {
+  return request(`/v1/calls/${encodeURIComponent(callId)}/ivr`, json("POST", { menu, ...(prompt ? { prompt } : {}) }));
 }
 
 function getIvr(callId) {

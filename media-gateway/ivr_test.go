@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 	"strings"
@@ -123,6 +124,43 @@ func TestBundledPromptHasPlayableOpusPackets(t *testing.T) {
 	}
 	if _, err := opusPackets(menuAudio[:30]); err == nil {
 		t.Fatal("truncated recording accepted")
+	}
+}
+
+func TestWaitPromptReplacesMenuInRunningPlayer(t *testing.T) {
+	waitPackets, err := opusPackets(waitAudio)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(waitPackets) < 100 {
+		t.Fatal("waiting recording truncated")
+	}
+	g := &gateway{sessions: make(map[string]*callSession)}
+	s, err := g.newSession("waiting-prompt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Exercise switching recordings in the already running playback loop.
+	s.ivrStarted = true
+	s.ivrCursor = 100
+	if err = g.playIvr(s.id, false, "wait"); err != nil {
+		t.Fatal(err)
+	}
+	if !s.ivrPlaying || s.ivrCursor != 0 || len(s.ivrPackets) != len(waitPackets) || !bytes.Equal(s.ivrPackets[0], waitPackets[0]) {
+		t.Fatal("waiting message did not replace the menu from its beginning")
+	}
+	if err = g.playIvr(s.id, false); err != nil {
+		t.Fatal(err)
+	}
+	if s.ivrPlaying {
+		t.Fatal("silence request kept the message playing")
+	}
+	if err = g.playIvr(s.id, false, "unknown"); err == nil {
+		t.Fatal("unknown prompt accepted")
+	}
+	s.currentAgent = "72"
+	if err = g.playIvr(s.id, false, "wait"); err == nil {
+		t.Fatal("waiting recording interrupted a human call")
 	}
 }
 

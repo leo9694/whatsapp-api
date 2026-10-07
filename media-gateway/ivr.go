@@ -15,6 +15,9 @@ import (
 //go:embed audio/menu.ogg
 var menuAudio []byte
 
+//go:embed audio/aguarde.ogg
+var waitAudio []byte
+
 type ivrDigit struct {
 	ID    uint64 `json:"id"`
 	Digit string `json:"digit"`
@@ -76,12 +79,21 @@ func (s *callSession) receiveDigit(packet *rtp.Packet) {
 	}
 }
 
-func (g *gateway) playIvr(callID string, menu bool) error {
+func (g *gateway) playIvr(callID string, menu bool, prompt ...string) error {
 	s, err := g.session(callID)
 	if err != nil {
 		return err
 	}
-	packets, err := opusPackets(menuAudio)
+	audio := menuAudio
+	playing := menu
+	if len(prompt) > 0 && prompt[0] != "" {
+		if prompt[0] != "wait" {
+			return fmt.Errorf("unknown IVR prompt")
+		}
+		audio = waitAudio
+		playing = true
+	}
+	packets, err := opusPackets(audio)
 	if err != nil {
 		return err
 	}
@@ -90,7 +102,8 @@ func (g *gateway) playIvr(callID string, menu bool) error {
 		s.mu.Unlock()
 		return fmt.Errorf("call no longer waiting")
 	}
-	s.ivrPlaying = menu
+	s.ivrPlaying = playing
+	s.ivrPackets = packets
 	s.ivrCursor = 0
 	started := s.ivrStarted
 	s.ivrStarted = true
@@ -112,9 +125,9 @@ func (g *gateway) playIvr(callID string, menu bool) error {
 			}
 			payload := []byte{0xf8, 0xff, 0xfe} // Opus comfort silence keeps the media leg alive.
 			if s.ivrPlaying && s.metaPeer != nil && s.metaPeer.ConnectionState() == webrtc.PeerConnectionStateConnected {
-				payload = packets[s.ivrCursor]
+				payload = s.ivrPackets[s.ivrCursor]
 				s.ivrCursor++
-				if s.ivrCursor == len(packets) {
+				if s.ivrCursor == len(s.ivrPackets) {
 					s.ivrPlaying = false
 				}
 			}

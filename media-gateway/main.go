@@ -48,6 +48,7 @@ type callSession struct {
 	ivrStarted    bool
 	ivrPlaying    bool
 	ivrCursor     int
+	ivrPackets    [][]byte
 	ivrLastDigit  string
 	ivrDigitID    uint64
 	ivrDigits     []ivrDigit
@@ -683,8 +684,8 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case len(parts) == 4 && parts[0] == "v1" && parts[1] == "calls" && parts[3] == "ivr":
 		if r.Method == "POST" {
-			var body struct{ Menu bool }
-			if err = readJSON(w, r, &body); err == nil { err = s.gateway.playIvr(parts[2], body.Menu) }
+			var body struct{ Menu bool; Prompt string }
+			if err = readJSON(w, r, &body); err == nil { err = s.gateway.playIvr(parts[2], body.Menu, body.Prompt) }
 			if err == nil { writeJSON(w, 200, map[string]bool{"success": true}); return }
 		} else if r.Method == "GET" {
 			var session *callSession

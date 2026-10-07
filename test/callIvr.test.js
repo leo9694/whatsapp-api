@@ -24,7 +24,7 @@ function fixture() {
     gateway: {
       getMetaSession: async () => ({ sdp: "same-answer" }),
       waitForMetaReady: async () => ({ ready: true }),
-      playIvr: async (_id, menu) => actions.push(["audio", menu]),
+      playIvr: async (_id, menu, prompt) => actions.push(["audio", menu, prompt]),
       getIvr: async () => ({ digits }), closeCall: async () => actions.push(["close"]),
     },
     whatsapp: {
@@ -53,6 +53,21 @@ test("URA toca antes de notificar e encaminha 1 ao Financeiro sem novo aceite", 
   f.ivr.guard(f.call(), { id: "72" });
   assert.throws(() => f.ivr.guard(f.call(), { id: "116" }), { status: 403 });
 });
+
+for (const digit of ["1", "2", "3"]) {
+  test(`escolha ${digit} toca aviso de espera uma vez e notifica o setor`, async () => {
+    const f = fixture();
+    await f.ivr.start(f.call(), config);
+    f.digits.push({ id: 1, digit });
+    await f.ivr.tick("call");
+    await f.ivr.tick("call");
+    assert.equal(f.actions.filter(([action, , prompt]) => action === "audio" && prompt === "wait").length, 1);
+    assert.deepEqual(f.events[0].ids, config.options[digit].agentIds);
+    f.advance(25000);
+    await f.ivr.tick("call");
+    assert.equal(f.actions.filter(([action, , prompt]) => action === "audio" && prompt === "wait").length, 1);
+  });
+}
 
 test("9 repete a gravação uma vez mesmo recebendo o mesmo evento novamente", async () => {
   const f = fixture(); await f.ivr.start(f.call(), config);

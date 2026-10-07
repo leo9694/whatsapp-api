@@ -44,7 +44,7 @@ function createIvr(deps) {
     const state = { ...session.call.ivrState, phase: "QUEUE", option, fallback, declined: [] };
     session.call = await deps.repo.update(session.call.metaCallId, { ivrState: state });
     session.routedAt = clock();
-    await deps.gateway.playIvr(session.call.metaCallId, false);
+    await deps.gateway.playIvr(session.call.metaCallId, false, option ? "wait" : undefined);
     if (!allowedIds(session.call).length && !fallback) {
       session.call = await deps.repo.update(session.call.metaCallId, { ivrState: { ...state, fallback: true } });
     }
