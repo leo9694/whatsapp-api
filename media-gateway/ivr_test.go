@@ -4,10 +4,61 @@ import (
 	"bytes"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
+	"net"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestGatewayAdvertisesOnlyConfiguredAddressFamily(t *testing.T) {
+	for _, publicIP := range []string{"192.0.2.10", "2001:db8::10"} {
+		t.Run(publicIP, func(t *testing.T) {
+			g, err := newGateway(publicIP, 40000, 40100)
+			if err != nil {
+				t.Fatal(err)
+			}
+			remote, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer remote.Close()
+			if _, err = remote.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio); err != nil {
+				t.Fatal(err)
+			}
+			offer, err := remote.CreateOffer(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Offer both address families, as Meta does. The answer must expose
+			// only the family selected by MEDIA_PUBLIC_IP even on a dual-stack host.
+			offer.SDP += "a=candidate:ipv4 1 udp 2130706431 192.0.2.20 3480 typ host\r\n" +
+				"a=candidate:ipv6 1 udp 2130706430 2001:db8::20 3480 typ host\r\n"
+			answer, err := g.prepareInbound("address-family", offer.SDP)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer g.closeSession("address-family")
+			count := 0
+			for _, line := range strings.Split(answer, "\r\n") {
+				if !strings.HasPrefix(line, "a=candidate:") {
+					continue
+				}
+				parts := strings.Fields(line)
+				if len(parts) < 8 || !strings.EqualFold(parts[2], "udp") {
+					t.Fatalf("unexpected candidate: %s", line)
+				}
+				ip := net.ParseIP(parts[4])
+				if ip == nil || !ip.Equal(net.ParseIP(publicIP)) {
+					t.Fatalf("unconfigured audio path advertised: %s", line)
+				}
+				count++
+			}
+			if count == 0 {
+				t.Skip("host has no interface for this IP family")
+			}
+		})
+	}
+}
 
 func TestGatewayNegotiatesTelephoneEventAt8000Hz(t *testing.T) {
 	g, err := newGateway("127.0.0.1", 40000, 40100)

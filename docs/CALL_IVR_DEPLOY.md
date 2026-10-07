@@ -15,6 +15,8 @@ A API atende o cliente no gateway e reproduz `media-gateway/audio/menu.ogg`, con
 
 O atendimento automático envia `pre_accept`, aguarda ICE estável e envia `accept` com o mesmo SDP. Só após a confirmação do aceite inicia o silêncio, confirma DTLS e toca o menu. O gateway não escreve RTP enquanto o peer ainda está conectando, para não bloquear as consultas de estado. Após a escolha 1, 2 ou 3, toca uma vez `audio/aguarde.ogg` enquanto notifica o setor; ao conectar um atendente, interrompe a gravação.
 
+O gateway anuncia apenas UDP da família de `MEDIA_PUBLIC_IP`. Na VPS com IPv4 e IPv6, a captura de uma chamada com falha mostrou ClientHello independentes nos dois caminhos: o ServerKeyExchange foi assinado com o random IPv4, mas enviado ao handshake IPv6, que respondeu com `fatal decrypt_error`. Limitar os candidatos à família configurada impede essa mistura durante a escolha do caminho ICE. Não é necessário desabilitar IPv6 no sistema nem alterar credenciais.
+
 Configuração e fase da URA ficam no PostgreSQL. Somente uma sessão assinada de diretoria do ambiente `production` pode alterar a configuração central. O ambiente local não substitui essa configuração e continua sujeito à posse exclusiva da API. Se a API reiniciar, chamadas aceitas e ainda aguardando são recuperadas para a fila geral; se o gateway também reiniciou e perdeu a mídia, são encerradas. Chamadas que ainda não haviam sido aceitas não são ressuscitadas.
 
 ## Instalação

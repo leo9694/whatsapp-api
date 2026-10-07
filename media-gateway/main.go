@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -103,6 +104,10 @@ type metaHealth struct {
 }
 
 func newGateway(publicIP string, minPort, maxPort uint16) (*gateway, error) {
+	address := net.ParseIP(publicIP)
+	if address == nil {
+		return nil, fmt.Errorf("MEDIA_PUBLIC_IP must be an IP address")
+	}
 	var mediaEngine webrtc.MediaEngine
 	err := mediaEngine.RegisterCodec(webrtc.RTPCodecParameters{
 		RTPCodecCapability: webrtc.RTPCodecCapability{
@@ -124,6 +129,15 @@ func newGateway(publicIP string, minPort, maxPort uint16) (*gateway, error) {
 		return nil, err
 	}
 	var settings webrtc.SettingEngine
+	// Meta can start independent DTLS handshakes on IPv4 and IPv6 before ICE
+	// settles. Pion shares one DTLS state across the selected ICE paths: a
+	// cookie reply from the other handshake can use the first client's random
+	// and fail signature verification. Advertise only the configured IP family.
+	networkType := webrtc.NetworkTypeUDP6
+	if address.To4() != nil {
+		networkType = webrtc.NetworkTypeUDP4
+	}
+	settings.SetNetworkTypes([]webrtc.NetworkType{networkType})
 	if err = settings.SetEphemeralUDPPortRange(minPort, maxPort); err != nil {
 		return nil, err
 	}
