@@ -7,6 +7,7 @@ const paginationSchema = z.object({
 });
 const conversationListSchema = paginationSchema.extend({
   search: z.string().trim().max(100).optional(),
+  messageSearch: z.string().trim().min(2).max(200).optional(),
   status: z.enum(["OPEN", "CLOSED", "ARCHIVED"]).optional(),
   assignment: z.enum(["ALL", "MINE", "UNASSIGNED"]).default("MINE"),
   viewerId: z.string().trim().min(1).max(64).optional(),

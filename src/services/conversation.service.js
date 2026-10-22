@@ -20,8 +20,17 @@ function assertFreeTextWindow(conversation) {
   return dto.serviceWindow;
 }
 
-async function listConversations({ page, limit, search, status, assignment = "MINE", viewerId, channelId, phoneNumberId }, db = prisma) {
+async function listConversations({ page, limit, search, messageSearch, status, assignment = "MINE", viewerId, channelId, phoneNumberId }, db = prisma) {
   if (assignment === "MINE" && !viewerId) throw new AppError("Identificacao do atendente ausente.", 400);
+  if (messageSearch) {
+    if (assignment !== 'ALL') throw new AppError('A busca de mensagens deve usar a fila ALL e aplicar a atribuição no atendimento.', 400);
+    limit = Math.min(limit, 8);
+    const [items, total] = await require('../repositories/messageSearch.repository').search({ messageSearch, search,
+      skip: (page - 1) * limit, take: limit, status, channelId, phoneNumberId }, db);
+    return { data: items.map(({ messages, matchedMessage, ...conversation }) => ({
+      ...toConversationDto(conversation, { lastMessage: toMessageDto(messages[0] || null) }), matchedMessage
+    })), pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+  }
   const [data, total] = await conversationRepository.list({
     skip: (page - 1) * limit,
     take: limit,
