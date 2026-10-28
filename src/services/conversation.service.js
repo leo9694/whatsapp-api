@@ -6,6 +6,7 @@ const whatsappService = require("./whatsapp.service");
 const socket = require("../sockets/socket");
 const logger = require("../utils/logger");
 const templateService = require("./template.service");
+const templateMediaService = require("./templateMedia.service");
 const mediaService = require("./media.service");
 const { toMessageDto } = require("../utils/messageDto");
 const contactRepository = require("../repositories/contact.repository");
@@ -215,7 +216,8 @@ async function sendTemplate(id, input, agent, dependencies = {}) {
   if (agent) assertAssigned(conversation, agent);
   const found = await findTemplate(input.templateName, input.language);
   if (found.template.status !== "APPROVED") throw new AppError("Somente templates aprovados podem ser enviados.", 400);
-  const components = templateService.prepareTemplateComponents(found.template, input.components || []);
+  const prepared = templateService.prepareTemplateComponents(found.template, input.components || []);
+  const components = await templateMediaService.prepareTemplateMedia(prepared, conversationPhoneNumberId(conversation), dependencies.templateMedia || {});
   const meta = await send(
     conversation.contact.waId,
     input.templateName,

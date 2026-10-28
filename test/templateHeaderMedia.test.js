@@ -19,17 +19,20 @@ for (const format of ['IMAGE', 'VIDEO', 'DOCUMENT']) {
     const message = await conversations.sendTemplate(created.conversation.id, {
       templateName: template.name, language: template.language, components: body
     }, null, { db, findTemplate: async () => ({ template }),
+      templateMedia: { cache: new Map(),
+        fetch: async () => new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': { IMAGE: 'image/png', VIDEO: 'video/mp4', DOCUMENT: 'application/pdf' }[format] } }),
+        upload: async () => ({ mediaId: `media-${format}` }) },
       sendTemplateMessage: async (_to, _name, _language, components, phoneNumberId) => {
         assert.equal(phoneNumberId, db.state.channels[1].phoneNumberId);
         enviados = components;
         return { messages: [{ id: `wamid.${format}` }] };
       } });
     const type = format.toLowerCase();
-    assert.deepEqual(enviados[0], { type: 'header', parameters: [{ type, [type]: { link: 'https://scontent.whatsapp.net/modelo.jpg' } }] });
+    assert.deepEqual(enviados[0], { type: 'header', parameters: [{ type, [type]: { id: `media-${format}` } }] });
     assert.equal(enviados[1], body[0]);
     assert.equal(body.length, 1);
     assert.equal(message.templateData.headerMedia.type, type);
-    assert.equal(message.templateData.headerMedia.link, template.header.media.link);
+    assert.equal(message.templateData.headerMedia.id, `media-${format}`);
     assert.equal(message.renderedText, 'Promoção ICON VET');
   });
 }
