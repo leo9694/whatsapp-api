@@ -215,17 +215,18 @@ async function sendTemplate(id, input, agent, dependencies = {}) {
   if (agent) assertAssigned(conversation, agent);
   const found = await findTemplate(input.templateName, input.language);
   if (found.template.status !== "APPROVED") throw new AppError("Somente templates aprovados podem ser enviados.", 400);
+  const components = templateService.prepareTemplateComponents(found.template, input.components || []);
   const meta = await send(
     conversation.contact.waId,
     input.templateName,
     input.language,
-    input.components || [],
+    components,
     conversationPhoneNumberId(conversation),
   );
   const wamid = meta.messages?.[0]?.id || null;
   if (!wamid) throw new AppError("A Meta aceitou a solicitação sem retornar o ID da mensagem.", 502);
   const now = new Date();
-  const rendered = templateService.renderTemplate(found.template, input.components || []);
+  const rendered = templateService.renderTemplate(found.template, components);
   const message = await persistOutbound(id, {
     wamid,
     type: "template",
@@ -234,7 +235,7 @@ async function sendTemplate(id, input, agent, dependencies = {}) {
     messageTimestamp: now,
     templateName: input.templateName,
     templateLanguage: input.language,
-    templateComponents: input.components || [],
+    templateComponents: components,
     templateData: rendered,
     renderedText: rendered.body || null,
     senderUserId: agent ? String(agent.id) : null,

@@ -3,6 +3,56 @@ const whatsappService = require("./whatsapp.service");
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 let cache = { expiresAt: 0, templates: [] };
+const MEDIA_HEADERS = new Set(["IMAGE", "VIDEO", "DOCUMENT"]);
+
+function mediaLink(value) {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password ? url.href : null;
+  } catch { return null; }
+}
+
+function approvedHeaderMedia(header) {
+  const format = String(header?.format || "").toUpperCase();
+  if (!MEDIA_HEADERS.has(format)) return null;
+  // Handles da API de upload usados na aprovação ("4:...") não são IDs de
+  // mídia de envio. Reaproveite somente o link retornado no modelo aprovado.
+  const link = (Array.isArray(header.examples) ? header.examples : []).map(mediaLink).find(Boolean);
+  return link ? { type: format.toLowerCase(), link } : null;
+}
+
+function prepareTemplateComponents(template, components = []) {
+  const result = [...components];
+  const format = String(template.header?.format || "").toUpperCase();
+  if (!MEDIA_HEADERS.has(format)) return result;
+  const type = format.toLowerCase();
+  const headers = result.filter((item) => String(item.type).toLowerCase() === "header");
+  if (!headers.length) {
+    const media = approvedHeaderMedia(template.header);
+    if (!media) throw new AppError(`O template exige ${type}. A mídia da aprovação não está disponível; informe um link válido para o arquivo.`, 400);
+    result.unshift({ type: "header", parameters: [{ type, [type]: { link: media.link } }] });
+  } else {
+    const parameters = headers[0].parameters || [];
+    const parameter = parameters[0];
+    const media = parameter?.[type];
+    if (headers.length !== 1 || parameters.length !== 1 || parameter?.type !== type || !media
+      || Boolean(media.id) === Boolean(media.link)
+      || (media.id && !/^[A-Za-z0-9_-]{1,512}$/.test(String(media.id)))
+      || (media.link && !mediaLink(media.link))) {
+      throw new AppError(`O cabeçalho do template exige uma mídia do tipo ${type}, com ID ou link válido.`, 400);
+    }
+  }
+  return result;
+}
+
+function sentHeaderMedia(components = []) {
+  const header = components.find((component) => String(component.type).toLowerCase() === "header");
+  const parameter = header?.parameters?.[0];
+  if (!MEDIA_HEADERS.has(String(parameter?.type || "").toUpperCase())) return null;
+  const media = parameter[parameter.type];
+  return media ? { type: parameter.type, ...(media.id ? { id: media.id } : {}),
+    ...(mediaLink(media.link) ? { link: mediaLink(media.link) } : {}), ...(media.filename ? { filename: media.filename } : {}) } : null;
+}
 
 function placeholders(text = "") {
   return [...new Set([...text.matchAll(/\{\{(\d+)\}\}/g)].map((match) => Number(match[1])))].sort((a, b) => a - b);
@@ -35,6 +85,7 @@ function normalizeTemplate(raw) {
       text: header.text || null,
       placeholders: placeholders(header.text),
       examples: componentExamples(header).header,
+      media: approvedHeaderMedia({ format: header.format, examples: componentExamples(header).header }),
     } : null,
     body: body ? {
       text: body.text || "",
@@ -128,6 +179,7 @@ function renderTemplate(template, components = []) {
     category: template.category || null,
     header: template.header?.text ? applyValues(template.header.text, parameters.header) : null,
     headerFormat: template.header?.format || null,
+    headerMedia: sentHeaderMedia(components),
     body: applyValues(template.body?.text, parameters.body),
     footer: template.footer || null,
     buttons,
@@ -149,6 +201,7 @@ async function previewTemplate({ name, language, parameters = {} }, dependencies
     language: template.language,
     header: template.header ? applyValues(template.header.text, parameters.header) : null,
     headerFormat: template.header?.format || null,
+    headerMedia: approvedHeaderMedia(template.header),
     body: applyValues(template.body?.text, parameters.body),
     footer: template.footer,
     buttons: template.buttons,
@@ -164,4 +217,5 @@ function clearTemplateCache() {
 module.exports = {
   normalizeTemplate, listTemplates, findTemplate, previewTemplate, clearTemplateCache, placeholders,
   parametersFromComponents, renderTemplate,
+  prepareTemplateComponents,
 };
